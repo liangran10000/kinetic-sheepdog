@@ -670,7 +670,6 @@ int gateway_write_obj(struct request *req)
 	struct generation_reference *refs = NULL;
 
 	if ((req->rq.flags & SD_FLAG_CMD_TGT) &&
-	    !is_inode_refresh_req(req) &&
 	    is_refresh_required(oid_to_vid(oid))) {
 		sd_debug("refresh is required: %"PRIx64, oid);
 		return SD_RES_INODE_INVALIDATED;
@@ -702,7 +701,8 @@ int gateway_write_obj(struct request *req)
 		update_obj_refcnt(hdr, vids, new_vids, refs);
 	}
 out:
-	invalidate_other_nodes(oid_to_vid(oid));
+	if (is_data_vid_update(hdr))
+		invalidate_other_nodes(oid_to_vid(oid));
 
 	free(vids);
 	free(refs);
@@ -745,7 +745,6 @@ int gateway_create_and_write_obj(struct request *req)
 	uint64_t oid = req->rq.obj.oid;
 
 	if ((req->rq.flags & SD_FLAG_CMD_TGT) &&
-	    !is_inode_refresh_req(req) &&
 	    is_refresh_required(oid_to_vid(oid))) {
 		sd_debug("refresh is required: %"PRIx64, oid);
 		return SD_RES_INODE_INVALIDATED;
