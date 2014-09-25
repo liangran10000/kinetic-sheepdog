@@ -34,6 +34,9 @@ static int write_config(void)
 {
 	int ret;
 
+	if(sys->store & STORE_FLAG_KINETIC)
+		return kinetic_write_config( (char *)&config, sizeof(config),
+			true);
 	ret = atomic_create_and_write(config_path, (char *)&config,
 				      sizeof(config), true);
 	if (ret < 0) {
@@ -158,7 +161,6 @@ int set_cluster_config(const struct cluster_info *cinfo)
 	memset(config.store, 0, sizeof(config.store));
 	pstrcpy((char *)config.store, sizeof(config.store),
 		(char *)cinfo->store);
-
 	return write_config();
 }
 

@@ -11,10 +11,12 @@
 
 #include <sys/resource.h>
 #include <malloc.h>
+#include <linux/string.h>
 
 #include "sheep_priv.h"
 #include "trace/trace.h"
 #include "option.h"
+#include "kinetic_store.h"
 
 #define EPOLL_SIZE 4096
 #define DEFAULT_OBJECT_DIR "/tmp"
@@ -137,6 +139,7 @@ static struct sd_option sheep_options[] = {
 	{'P', "pidfile", true, "create a pid file"},
 	{'r', "http", true, "enable http service. (default: disabled)",
 	 http_help},
+	 {'s', "data store", true, "data store type such as kinetic"},
 	{'u', "upgrade", false, "upgrade to the latest data layout"},
 	{'v', "version", false, "show the version"},
 	{'w', "cache", true, "enable object cache", cache_help},
@@ -572,8 +575,7 @@ static int lock_and_daemon(bool daemonize, const char *base_dir)
 		}
 	}
 
-	ret = lock_base_dir(base_dir);
-	if (ret < 0) {
+	if ((ret = lock_base_dir(base_dir)) < 0) {
 		sd_err("locking directory: %s failed", base_dir);
 		status = 1;
 		goto end;
@@ -607,14 +609,22 @@ static void sighup_handler(int signum)
 	/* forward SIGHUP for log rotating */
 	kill(logger_pid, SIGHUP);
 }
+static const char *valid_stores[] = {"plain", "kinetic"};
 
+static bool store_is_valid(char *store)
+{
+	int i;
+	for (i = 0; i < sizeof(valid_stores)/sizeof(valid_stores[0]); i++)
+		if (!strncmp(valid_stores[i], store, strlen(valid_stores[i]))) return true;
+	return false;
+}
 int main(int argc, char **argv)
 {
 	int ch, longindex, ret, port = SD_LISTEN_PORT, io_port = SD_LISTEN_PORT;
 	int nr_vnodes = SD_DEFAULT_VNODES, rc = 1;
 	const char *dirp = DEFAULT_OBJECT_DIR, *short_options;
-	char *dir, *p, *pid_file = NULL, *bindaddr = NULL, log_path[PATH_MAX],
-	     *argp = NULL;
+	char *dir = NULL, *p, *pid_file = NULL, *bindaddr = NULL,
+		log_path[PATH_MAX], *argp = NULL, *store = NULL;
 	bool explicit_addr = false;
 	int64_t zone = -1;
 	struct cluster_driver *cdrv;
@@ -749,6 +759,11 @@ int main(int argc, char **argv)
 				PACKAGE_VERSION);
 			exit(0);
 			break;
+		case 's':
+			if (!store_is_valid(optarg))
+					exit(1);
+			store = optarg;
+			break;
 		default:
 			usage(1);
 			break;
@@ -758,7 +773,13 @@ int main(int argc, char **argv)
 	#ifdef HAVE_DISKVNODES
 	sys->cinfo.flags |= SD_CLUSTER_FLAG_DISKMODE;
 	#endif
+	if (store && is_kinetic_store(store)) {
+		sys->store |= STORE_FLAG_KINETIC;
+		uatomic_set_false(&sys->use_journal);
+		sd_info("journaling is off for kinetic driver...");
+	}
 
+	
 	sheep_info.port = port;
 	early_log_init(log_format, &sheep_info);
 
@@ -808,24 +829,14 @@ int main(int argc, char **argv)
 			exit(1);
 		}
 	}
-
-	ret = init_base_path(dirp);
-	if (ret)
+	if(init_base_path(dirp))
 		exit(1);
-
-	dir = realpath(dirp, NULL);
-	if (!dir) {
-		sd_err("%m");
-		exit(1);
-	}
-
+	if ((dir = realpath( dirp, NULL)) == NULL)
+			exit(1);
 	snprintf(log_path, sizeof(log_path), "%s/" LOG_FILE_NAME,
 		 logdir ?: dir);
-
 	free(logdir);
-
 	srandom(port);
-
 	if (lock_and_daemon(log_dst_type != LOG_DST_STDOUT, dir)) {
 		free(argp);
 		goto cleanup_dir;
@@ -838,15 +849,17 @@ int main(int argc, char **argv)
 	}
 
 	ret = init_global_pathnames(dir, argp);
-	free(argp);
+
 	if (ret)
 		goto cleanup_log;
 
 	ret = init_event(EPOLL_SIZE);
 	if (ret)
 		goto cleanup_log;
-
-	ret = init_config_file();
+	if(sys->store & STORE_FLAG_KINETIC)
+		ret = kinetic_init_config_file(dir, argp);
+	else
+		ret = init_config_file();
 	if (ret)
 		goto cleanup_log;
 
@@ -935,7 +948,7 @@ int main(int argc, char **argv)
 		goto cleanup_journal;
 	}
 
-	if (chdir(dir) < 0) {
+	if(!(sys->store & STORE_FLAG_KINETIC) && (chdir(dir) < 0)) { 
 		sd_err("failed to chdir to %s: %m", dir);
 		goto cleanup_pid_file;
 	}
@@ -965,6 +978,7 @@ cleanup_cluster:
 	leave_cluster();
 
 cleanup_log:
+	free(argp);
 	log_close();
 
 cleanup_dir:

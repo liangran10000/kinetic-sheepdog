@@ -26,7 +26,7 @@ sbin_PROGRAMS		= sheep
 
 sheep_SOURCES		= sheep.c group.c request.c gateway.c store.c vdi.c \
 			  journal.c ops.c recovery.c cluster/local.c \
-			  object_cache.c object_list_cache.c \
+			  object_cache.c object_list_cache.c kinetic_store.c \
 			  plain_store.c config.c migrate.c md.c
 
 if BUILD_HTTP
@@ -53,8 +53,8 @@ AM_CPPFLAGS		+= -DENABLE_TRACE
 sheep_SOURCES		+= trace/trace.c trace/mcount.S trace/graph.c trace/checker.c
 endif
 
-sheep_LDADD	  	= ../lib/libsheepdog.a -lpthread -lm\
-			  $(libcpg_LIBS) $(libcfg_LIBS) $(libacrd_LIBS) $(LIBS)
+sheep_LDADD	  	= ../lib/libsheepdog.a -lpthread -lm -lkinetic-c-client \
+			  -lcrypto -lssl $(libcpg_LIBS) $(libcfg_LIBS) $(libacrd_LIBS) $(LIBS)
 
 if BUILD_NFS
 sheep_LDADD		+= -lrt

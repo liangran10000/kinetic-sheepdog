@@ -740,5 +740,6 @@ static struct store_driver plain_store = {
 	.get_hash = default_get_hash,
 	.purge_obj = default_purge_obj,
 };
-
+#ifdef KINETIC
 add_store_driver(plain_store);
+#endif

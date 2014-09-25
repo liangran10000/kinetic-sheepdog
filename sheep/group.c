@@ -10,7 +10,7 @@
  */
 
 #include "sheep_priv.h"
-
+#include "kinetic_store.h"
 struct node {
 	struct sd_node ent;
 	struct list_node list;
@@ -1248,7 +1248,10 @@ int create_cluster(int port, int64_t zone, int nr_vnodes,
 
 	update_node_disks();
 
-	sys->cinfo.epoch = get_latest_epoch();
+	if(sys->store & STORE_FLAG_KINETIC) 
+		sys->cinfo.epoch = kinetic_get_latest_epoch();
+	else
+		sys->cinfo.epoch = get_latest_epoch();
 	if (sys->cinfo.epoch) {
 		ret = epoch_log_read(sys->cinfo.epoch, sys->cinfo.nodes,
 				sizeof(sys->cinfo.nodes), &nr_nodes);

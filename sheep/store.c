@@ -10,7 +10,7 @@
  */
 
 #include "sheep_priv.h"
-
+#include "kinetic_store.h"
 char *obj_path;
 char *epoch_path;
 
@@ -24,7 +24,10 @@ int update_epoch_log(uint32_t epoch, struct sd_node *nodes, size_t nr_nodes)
 	char path[PATH_MAX], *buf;
 
 	sd_debug("update epoch: %d, %zu", epoch, nr_nodes);
-
+	
+	if(sys->store & STORE_FLAG_KINETIC)
+		return kinetic_update_epoch_log(epoch,nodes,nr_nodes);
+	
 	/* Piggyback the epoch creation time for 'dog cluster info' */
 	time(&t);
 	nodes_len = nr_nodes * sizeof(struct sd_node);
@@ -58,6 +61,8 @@ static int do_epoch_log_read(uint32_t epoch, struct sd_node *nodes, int len,
 	struct stat epoch_stat;
 
 	snprintf(path, sizeof(path), "%s%08u", epoch_path, epoch);
+	if(sys->store & STORE_FLAG_KINETIC)
+		kinetic_do_epoch_log_read(epoch, nodes,len, nr_nodes, timestamp);
 	fd = open(path, O_RDONLY);
 	if (fd < 0) {
 		sd_debug("failed to open epoch %"PRIu32" log, %m", epoch);
@@ -129,7 +134,8 @@ uint32_t get_latest_epoch(void)
 	struct dirent *d;
 	uint32_t e, epoch = 0;
 	char *p;
-
+	if(sys->store & STORE_FLAG_KINETIC)
+		return kinetic_get_latest_epoch();
 	dir = opendir(epoch_path);
 	if (!dir)
 		panic("failed to get the latest epoch: %m");
@@ -156,7 +162,8 @@ int lock_base_dir(const char *d)
 	char *lock_path;
 	int ret = 0;
 	int fd, len = strlen(d) + strlen(LOCK_PATH) + 1;
-
+	if(sys->store & STORE_FLAG_KINETIC)
+		return kinetic_lock_base_dir(d);
 	lock_path = xzalloc(len);
 	snprintf(lock_path, len, "%s" LOCK_PATH, d);
 
@@ -183,6 +190,8 @@ out:
 
 int init_base_path(const char *d)
 {
+	if(sys->store & STORE_FLAG_KINETIC)
+		return kinetic_init_base_path(d);
 	if (xmkdir(d, sd_def_dmode) < 0) {
 		sd_err("cannot create the directory %s (%m)", d);
 		return -1;
@@ -194,6 +203,8 @@ int init_base_path(const char *d)
 static inline int check_path_len(const char *path)
 {
 	int len = strlen(path);
+	if(sys->store & STORE_FLAG_KINETIC)
+		return kinetic_check_path_len(path);
 	if (len > PATH_MAX) {
 		sd_err("insanely long object directory %s", path);
 		return -1;
@@ -222,12 +233,13 @@ static int init_obj_path(const char *base_path, char *argp)
 
 	if (check_path_len(base_path) < 0)
 		return -1;
+	if(sys->store & STORE_FLAG_KINETIC)
+				return kinetic_init_obj_path(base_path, argp);
 
 #define OBJ_PATH "/obj"
 	len = strlen(base_path) + strlen(OBJ_PATH) + 1;
 	obj_path = xzalloc(len);
 	snprintf(obj_path, len, "%s" OBJ_PATH, base_path);
-
 	/* Eat up the first component */
 	strtok(argp, ",");
 	p = strtok(NULL, ",");
@@ -353,6 +365,8 @@ int init_global_pathnames(const char *d, char *argp)
 {
 	int ret;
 
+	if(sys->store & STORE_FLAG_KINETIC)
+				return kinetic_init_global_pathnames(d, argp);
 	ret = init_obj_path(d, argp);
 	if (ret)
 		return ret;

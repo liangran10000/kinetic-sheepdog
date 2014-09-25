@@ -12,6 +12,7 @@
  */
 
 #include "sheep_priv.h"
+#include "kinetic_store.h"
 
 #define MD_VDISK_SIZE ((uint64_t)1*1024*1024*1024) /* 1G */
 
@@ -320,15 +321,19 @@ bool md_add_disk(const char *path, bool purge)
 		return false;
 	}
 
-	if (xmkdir(path, sd_def_dmode) < 0) {
-		sd_err("can't mkdir for %s, %m", path);
-		return false;
-	}
+	if(!(sys->store & STORE_FLAG_KINETIC))
+		if (xmkdir(path, sd_def_dmode) < 0) {
+			sd_err("can't mkdir for %s, %m", path);
+			return false;
+		}
 
 	new = xmalloc(sizeof(*new));
 	pstrcpy(new->path, PATH_MAX, path);
 	trim_last_slash(new->path);
-	new->space = init_path_space(new->path, purge);
+	if(sys->store & STORE_FLAG_KINETIC)
+		new->space = kinetic_init_path_space(new->path, purge);
+	else
+		new->space = init_path_space(new->path, purge);
 	if (!new->space) {
 		free(new);
 		return false;

@@ -11,7 +11,7 @@
 
 #include "sheep_priv.h"
 #include "trace/trace.h"
-
+#include "kinetic_store.h"
 enum sd_op_type {
 	SD_OP_TYPE_CLUSTER = 1, /* cluster operations */
 	SD_OP_TYPE_LOCAL,       /* local operations */
@@ -241,6 +241,8 @@ static int remove_epoch(uint32_t epoch)
 	char path[PATH_MAX];
 
 	sd_debug("remove epoch %"PRIu32, epoch);
+	if(sys->store & STORE_FLAG_KINETIC) 
+		return kinetic_remove_epoch(epoch);
 	snprintf(path, sizeof(path), "%s%08u", epoch_path, epoch);
 	ret = unlink(path);
 	if (ret && errno != ENOENT) {
@@ -267,7 +269,6 @@ static int cluster_make_fs(const struct sd_req *req, struct sd_rsp *rsp,
 		store_name);
 	sd_store = driver;
 	latest_epoch = get_latest_epoch();
-
 	ret = sd_store->format();
 	if (ret != SD_RES_SUCCESS)
 		return ret;

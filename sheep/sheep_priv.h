@@ -43,7 +43,6 @@
 #include "config.h"
 #include "sockfd_cache.h"
 #include "fec.h"
-
  /*
   * Functions that update global info must be called in the main
   * thread.  Add main_fn markers to such functions.
@@ -171,6 +170,8 @@ struct system_info {
 	int nr_ongoing_inode_update_request;
 	struct list_head prevented_inode_update_request_queue;
 	struct list_head pending_prevent_inode_update_request_queue;
+	#define STORE_FLAG_KINETIC 0x01
+	uint32_t store;
 };
 
 struct disk {
