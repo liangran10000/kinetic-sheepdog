@@ -16,14 +16,19 @@
 #include <kinetic_client.h>
 #include <string.h>
 /* KINETIC KEY STORE Design */
-#define CONFIG_OID "KINETIC_CONFIG"
-#define EPOCH_OID_PREFIX "EPOCH:" 
-#define STALE_OID_PREFIX "STALE:"
-#define OBJECT_OID_PREFIX "OBJECT:"
+#define CONFIG_OID 					"KINETIC_CONFIG"
+#define EPOCH_OID_PREFIX 			"EPOCH:" 
+#define STALE_OID_PREFIX 			"STALE:"
+#define OBJECT_OID_PREFIX 			"OBJECT:"
+#define DB_VERSION 					"0.0"
+#define KINETIC_TAG 				"KINETIC:SHEEPDOG"
+#define KINETIC_HMAC				"asdfasdf"
+#define KINETIC_CLUSTER_VERSION 	1
+#define KINETIC_IDENTITY 			1
 
-#define KINETIC_SD_FORMAT_VERSION 0x0005
-#define KINETIC_SD_CONFIG_SIZE 40
-#define KINETIC_TAG_SIZE 		16
+#define KINETIC_SD_FORMAT_VERSION 	0x0005
+#define KINETIC_SD_CONFIG_SIZE 		40
+#define KINETIC_TAG_SIZE 			16
 struct kinetic_req {
         KineticPDU reqPDU;
         KineticPDU respPDU;
@@ -48,6 +53,11 @@ struct kinetic_drive {
 	char			stale_path[PATH_MAX];
 	char			config_path[PATH_MAX];
 	struct list_node	list;
+	bool			nonBlocking;
+	int64_t			clusterVersion;
+	int64_t			identity;
+	char			hmacBuf[PATH_MAX];
+	ByteArray		hmacKey;
 	};
 
 typedef struct kinetic_drive kinetic_drive_t;
@@ -223,12 +233,12 @@ static void make_kinetic_req(struct kinetic_drive *drv, struct kinetic_req *req,
 	req->op = KineticClient_CreateOperation(&drv->conn, &req->reqPDU,
 			&req->respPDU);
    	req->metaData.algorithm = KINETIC_PROTO_ALGORITHM_SHA1;
-   	req->metaData.newVersion = BYTE_ARRAY_INIT_FROM_CSTRING(drv->ver);
+   	req->metaData.newVersion = BYTE_ARRAY_INIT_FROM_CSTRING(DB_VERSION);
    	req->metaData.dbVersion = BYTE_ARRAY_NONE;
    	req->metaData.tag.len  = sizeof(req->buf); 
    	req->metaData.tag.data  = (unsigned char *)&req->buf;
-	*(uint32_t *)req->buf = len;	 
-   	req->metaData.tag = BYTE_ARRAY_INIT_FROM_CSTRING((const char *)drv->tag); 
+	//*(uint32_t *)req->buf = len;	 
+   	req->metaData.tag = BYTE_ARRAY_INIT_FROM_CSTRING(KINETIC_TAG);
    	req->metaData.metadataOnly = false;
 	req->metaData.key = BYTE_ARRAY_INIT_FROM_CSTRING((const char *)req->oid);
 	req->metaData.value.data = buf;
@@ -895,9 +905,6 @@ int kinetic_check_path_len(const char *path)
 }
 static bool kinetic_add_disk(char *path, bool flag)
 {
-#define KINETIC_CLUSTER_VERSION 	1
-#define KINETIC_IDENTITY 		1
-#define KINETIC_HMAC_KEY		"kinetic_hmac_key"
 	char *host, *port, *ptrs, buf[PATH_MAX];
 	KineticStatus status;
 
@@ -924,19 +931,23 @@ static bool kinetic_add_disk(char *path, bool flag)
 	strncpy(drv->host, host, sizeof(drv->host));
 	strncpy(drv->base_path, path, sizeof(drv->base_path));
 	drv->port = atoi(port);
-	drv->conn.nonBlocking = false;
-	drv->conn.clusterVersion = KINETIC_CLUSTER_VERSION;
-	drv->conn.key = BYTE_ARRAY_INIT_FROM_CSTRING(KINETIC_HMAC_KEY);
+	drv->nonBlocking = false;
+	drv->clusterVersion = KINETIC_CLUSTER_VERSION;
+	strncpy(drv->hmacBuf, KINETIC_HMAC, sizeof(drv->hmacBuf));
+	drv->hmacKey = BYTE_ARRAY_INIT_FROM_CSTRING(drv->hmacBuf);
+	drv->identity = KINETIC_IDENTITY;
 	
-	if((status = KineticClient_Connect(&drv->conn, (const char *)&drv->host, drv->port,
-		drv->conn.nonBlocking, drv->conn.clusterVersion, drv->conn.identity,
-		drv->conn.key)) != KINETIC_STATUS_SUCCESS) {
-		sd_err("kinetic client connetion operation failed for IP:%s Port:%d\n", drv->host, drv->port );
+	/* FIXME wrong error code is returned upon success */
+	if((status = KineticClient_Connect(&drv->conn, (const char *)&drv->host,
+			drv->port, drv->nonBlocking, drv->clusterVersion,
+			drv->identity, drv->hmacKey)) == 0) {
+			sd_err("kinetic client connetion operation failed for"
+			"IP:%s Port:%d status:%d\n", drv->host, drv->port, status);
 		return SD_RES_NETWORK_ERROR;                                                                                              
 	}                                                          
 
 	list_add_tail(&drv->list, &drives);
-	return true;
+	return SD_RES_SUCCESS;
 }
 
 static int is_kinetic_meta_store(const char *path)
@@ -974,7 +985,7 @@ int kinetic_init_obj_path(const char *base_path, char *drive)
 		 * it. This is helpful to upgrade old sheep cluster to
 		 * the MD-enabled.
 		 */
-		if (!kinetic_add_disk(drive, true))
+		if (kinetic_add_disk(drive, true) != SD_RES_SUCCESS)
 			return -1;
 		md_add_disk(drive, false);
 	} else {
@@ -983,7 +994,7 @@ int kinetic_init_obj_path(const char *base_path, char *drive)
 				sd_err("%s is meta-store, abort", p);
 				return -1;
 			}
-			if(!kinetic_add_disk(p, true))
+			if(kinetic_add_disk(p, true) != SD_RES_SUCCESS)
 				return -1;
 			md_add_disk(p, false);
 		} while ((p = strtok(NULL, ",")));
@@ -1000,17 +1011,13 @@ int kinetic_init_obj_path(const char *base_path, char *drive)
 
 int kinetic_init_config_path(const char *path, char *addr)
 {
-#define CONFIG_PATH "/config"
-	struct kinetic_drive *drv = addr2drv(addr);
-	snprintf(drv->config_path, sizeof(drv->config_path), "%s" CONFIG_PATH, addr);
+	/* FIXME */
 	return 0;
 }
 
 int kinetic_init_epoch_path(const char *path, char *addr)
 {
-#define EPOCH_PATH "/epoch/"
-	struct kinetic_drive *drv = addr2drv(addr);
-	snprintf(drv->epoch_path, sizeof(drv->epoch_path), "%s" EPOCH_PATH, addr);
+	/* FIXME */
 	return 0;
 }
  uint64_t kinetic_init_path_space(const char *path, bool purge)
