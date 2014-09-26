@@ -27,15 +27,27 @@
 #define KINETIC_IDENTITY 			1
 
 #define KINETIC_SD_FORMAT_VERSION 	0x0005
-#define KINETIC_SD_CONFIG_SIZE 		40
-#define KINETIC_TAG_SIZE 			16
+#define KINETIC_SD_CONFIG_SIZE 		(40)
+#define KINETIC_TAG_SIZE 			(16)
+#define KINETIC_OBJECT_LIMIT		(0x1000000)
+
+struct kinetic_tag {
+#define SHA1_PRESENT 	0x001
+#define STALE_OBJECT	0x002
+		uint32_t	flags;
+		uint32_t	segs;			/* number of segments where each segment is 1M */
+		uint64_t	size;			/* size of the object */
+		uint64_t 	sha1;			/* SHA1 computed by the sheepdog */
+		uint32_t	seg_size;
+};
+
 struct kinetic_req {
         KineticPDU reqPDU;
         KineticPDU respPDU;
         KineticOperation op;
         KineticKeyValue metaData;
         uint8_t oid[PATH_MAX];
-		uint8_t buf[KINETIC_TAG_SIZE];
+		struct kinetic_tag tag;
 };
 
 struct kinetic_drive {
@@ -60,6 +72,7 @@ struct kinetic_drive {
 	ByteArray		hmacKey;
 	};
 
+
 typedef struct kinetic_drive kinetic_drive_t;
 LIST_HEAD(drives);
  
@@ -78,24 +91,26 @@ static struct sheepdog_config {
 #define CONFIG_PATH "/config"
 
 #define sector_algined(x) ({ ((x) & (SECTOR_SIZE - 1)) == 0; })
+static void make_kinetic_req(struct kinetic_drive *drv, struct kinetic_req *req,
+						uint32_t len, uint8_t *buf);
 
-static void epoch2oid(struct kinetic_req *req, uint32_t epoch)
+static void epoch2object(struct kinetic_req *req, uint32_t epoch)
 {
 	snprintf((char *)(req->oid), sizeof(req->oid), "%s%"PRIx32, EPOCH_OID_PREFIX,
 		epoch);
 }
 
 
-static void stale_object2oid(struct kinetic_req *req, uint64_t oid, uint32_t epoch)
+static void stale_oid2object(struct kinetic_req *req, uint64_t oid, uint32_t epoch)
 {
 	snprintf((char *)(req->oid), sizeof(req->oid), "%s:%"PRIx32":%"PRIx64, STALE_OID_PREFIX,
 		epoch, oid);
 }
 
-static void object2oid(struct kinetic_req *req, uint64_t oid)
+static void oid2object(struct kinetic_req *req, uint64_t oid, uint32_t seg, const char *prefix)
 {
-	snprintf((char *)(req->oid), sizeof(req->oid), "%s%" PRIx64,
-			OBJECT_OID_PREFIX, oid);
+	snprintf((char *)(req->oid), sizeof(req->oid), "%s%" PRIx64 "%" PRIx32,
+			prefix, oid, seg);
 }
 
 
@@ -103,6 +118,91 @@ static void config2oid(struct kinetic_req *req)
 {
 	snprintf((char *)&(req->oid), sizeof(req->oid), "%s", CONFIG_OID);
 }
+
+static KineticStatus kinetic_put(struct kinetic_drive *drv, 
+		struct kinetic_req *req, uint64_t oid, uint32_t len, uint8_t *buf)
+{  
+	KineticStatus status;
+	uint32_t i, seg_length, segs = len/KINETIC_OBJECT_LIMIT;
+	memset(req, 0x00, sizeof(*req));
+	req->tag.size = len;
+	req->tag.segs = segs;
+	for (i = 0; i <= segs; i ++) {
+		oid2object(req, oid, i, OBJECT_OID_PREFIX);
+		req->tag.seg_size = seg_length = len < KINETIC_OBJECT_LIMIT ?  len : KINETIC_OBJECT_LIMIT;
+		make_kinetic_req(drv, req, seg_length, buf);
+		if ((status = KineticClient_Put(&(req->op), &(req->metaData)))
+			 != KINETIC_STATUS_SUCCESS){
+			sd_err("failed to write object %"PRIx64, oid);
+			return SD_RES_NETWORK_ERROR;                                                                                              
+		}
+		len -= seg_length;
+		buf += seg_length;
+	}
+	return SD_RES_SUCCESS;
+}
+
+
+static KineticStatus kinetic_get(struct kinetic_drive *drv, 
+		struct kinetic_req *req, uint64_t oid, uint32_t len, uint8_t *buf)
+{  
+	KineticStatus status;
+	uint32_t i = 0, segs;
+	memset(req, 0x00, sizeof(*req));
+	oid2object(req, oid, 0, OBJECT_OID_PREFIX);
+	make_kinetic_req(drv, req, len,  buf);
+	if ((status = KineticClient_Get(&(req->op), &(req->metaData)))
+			 != KINETIC_STATUS_SUCCESS){
+			sd_err("failed to write object %"PRIx64, oid);
+			return SD_RES_NETWORK_ERROR;                                                                                              
+	}
+    segs = req->tag.segs;
+	for (i = 1; i <= segs; i++) {
+		buf += req->tag.seg_size;
+		if (len > req->tag.seg_size) 
+				len -=req->tag.seg_size;
+		else
+			return SD_RES_BUFFER_SMALL;
+		memset(req, 0x00, sizeof(*req));
+		oid2object(req, oid, i, OBJECT_OID_PREFIX);
+		make_kinetic_req(drv, req, len,  buf);
+		if ((status = KineticClient_Get(&(req->op), &(req->metaData)))
+			 != KINETIC_STATUS_SUCCESS){
+			sd_err("failed to write object %"PRIx64, oid);
+			return SD_RES_NETWORK_ERROR;                                                                                              
+		}
+	}
+	return SD_RES_SUCCESS;
+}
+
+static KineticStatus kinetic_delete(struct kinetic_drive *drv, 
+		struct kinetic_req *req, uint64_t oid)
+{  
+	KineticStatus status;
+	uint32_t i, segs;
+	memset(req, 0x00, sizeof(*req));
+	oid2object(req, oid, 0, OBJECT_OID_PREFIX);
+	make_kinetic_req(drv, req, 0, NULL);
+   	req->metaData.metadataOnly = true;
+	if ((status = KineticClient_Get(&(req->op), &(req->metaData)))
+			 != KINETIC_STATUS_SUCCESS){
+			sd_err("failed to write object %"PRIx64, oid);
+			return SD_RES_NETWORK_ERROR;                                                                                              
+	}
+    segs = req->tag.segs;
+	for (i = 1; i <= segs; i++) {
+		memset(&req, 0x00, sizeof(req));
+		oid2object(req, oid, i, OBJECT_OID_PREFIX);
+		make_kinetic_req(drv, req,   0, NULL);
+		if ((status = KineticClient_Delete(&(req->op), &(req->metaData)))
+		 	!= KINETIC_STATUS_SUCCESS){
+			sd_err("failed to delete object ignoring error %"PRIx64 "%"PRIx32,
+				 oid, i);
+		}
+	}
+	return SD_RES_SUCCESS;                                                                                              
+}
+
 
 static kinetic_drive_t  *addr2drv(const char *addr)
 {
@@ -154,7 +254,7 @@ int kinetic_get_store_path(uint64_t oid, uint8_t ec_index, char *path)
 
 	struct kinetic_req req;
 	struct kinetic_drive *drv = oid2drv(oid);
-	object2oid(&req, oid);
+	oid2object(&req, oid, 0, OBJECT_OID_PREFIX);
 	if (drv)
 			return snprintf(path, PATH_MAX, "%s:%s", drv->base_path, req.oid);
 	*path = '\0';
@@ -235,9 +335,8 @@ static void make_kinetic_req(struct kinetic_drive *drv, struct kinetic_req *req,
    	req->metaData.algorithm = KINETIC_PROTO_ALGORITHM_SHA1;
    	req->metaData.newVersion = BYTE_ARRAY_INIT_FROM_CSTRING(DB_VERSION);
    	req->metaData.dbVersion = BYTE_ARRAY_NONE;
-   	req->metaData.tag.len  = sizeof(req->buf); 
-   	req->metaData.tag.data  = (unsigned char *)&req->buf;
-	//*(uint32_t *)req->buf = len;	 
+   	req->metaData.tag.len  = sizeof(req->tag); 
+   	req->metaData.tag.data  = (unsigned char *)&req->tag;
    	req->metaData.tag = BYTE_ARRAY_INIT_FROM_CSTRING(KINETIC_TAG);
    	req->metaData.metadataOnly = false;
 	req->metaData.key = BYTE_ARRAY_INIT_FROM_CSTRING((const char *)req->oid);
@@ -248,11 +347,10 @@ static void make_kinetic_req(struct kinetic_drive *drv, struct kinetic_req *req,
 
 int kinetic_write(uint64_t oid, const struct siocb *iocb)
 {
-	int flags = prepare_iocb(oid, iocb, false), ret = SD_RES_SUCCESS;
+	int flags = prepare_iocb(oid, iocb, false);
 	uint32_t len = iocb->length;
 	struct kinetic_req req;
 	struct kinetic_drive *drv = NULL;
-	KineticStatus status;
 
 	if (iocb->epoch < sys_epoch()) {
 		sd_debug("%"PRIu32" sys %"PRIu32, iocb->epoch, sys_epoch());
@@ -274,15 +372,7 @@ int kinetic_write(uint64_t oid, const struct siocb *iocb)
 	 */
 	if (!kinetic_exist(oid, iocb->ec_index))
 		return SD_RES_NO_OBJ;
-	memset(&req, 0x00, sizeof(req));
-	object2oid(&req, oid);
-	make_kinetic_req(drv, &req, len, iocb->buf);
-	if ((status = KineticClient_Put(&(req.op), &(req.metaData)))
-		 != KINETIC_STATUS_SUCCESS){
-		sd_err("failed to write object %"PRIx64, oid);
-		return SD_RES_NETWORK_ERROR;                                                                                              
-	}
-	return ret;
+	return  kinetic_put(drv, &req, oid, len, iocb->buf);
 }
 
 static int make_stale_dir(const char *path)
@@ -387,10 +477,8 @@ int kinetic_init(void)
 static int kinetic_read_from_path(uint64_t oid, const char *path,
 				  const struct siocb *iocb)
 {
-	int ret = SD_RES_SUCCESS;
 	struct kinetic_req req;
-	struct kinetic_drive *drv = NULL;
-	KineticStatus status;
+	struct kinetic_drive *drv = addr2drv(NULL);
 
 	/*
 	 * Make sure oid is in the right place because oid might be misplaced
@@ -402,15 +490,7 @@ static int kinetic_read_from_path(uint64_t oid, const char *path,
 	if (!is_stale_path(path) && !kinetic_exist(oid, iocb->ec_index))
 		return err_to_sderr(path, oid, ENOENT);
  
-	memset(&req, 0x00, sizeof(req));
-	object2oid(&req, oid);
-	make_kinetic_req(drv, &req,  iocb->length, iocb->buf);
-	status = KineticClient_Get(&(req.op), &(req.metaData));
-	if (unlikely(status != KINETIC_STATUS_SUCCESS)) {
-		sd_err("failed to read object %"PRIx64 , oid);
-		return SD_RES_NETWORK_ERROR;                                                                                              
-	}
-	return ret;
+	return kinetic_get(drv, &req, oid, iocb->length, iocb->buf);
 }
 
 
@@ -439,9 +519,7 @@ int kinetic_read(uint64_t oid, const struct siocb *iocb)
 
 static size_t  req_obj_size(struct kinetic_req *req)
 {
-  /* FIXME */
-  return (size_t)0;
-
+	return req->tag.size;
 }
 size_t kinetic_get_store_objsize(uint64_t oid)
 {
@@ -456,10 +534,11 @@ size_t kinetic_get_store_objsize(uint64_t oid)
 	}
  
 	memset(&req, 0x00, sizeof(req));
-	object2oid(&req, oid);
+	oid2object(&req, oid, 0, OBJECT_OID_PREFIX);
 	make_kinetic_req(drv, &req,  0, NULL);
-	status = KineticClient_Get(&(req.op), &(req.metaData));
 	req.metaData.metadataOnly = true;
+	status = KineticClient_Get(&(req.op), &(req.metaData));
+
 	if (unlikely(status != KINETIC_STATUS_SUCCESS)) {
 		sd_err("failed to read object %"PRIx64 , oid);
 		return 0;                                                                                              
@@ -486,7 +565,7 @@ int kinetic_link(uint64_t oid, uint32_t tgt_epoch)
 	sd_debug("try link %"PRIx64" from snapshot with epoch %d", oid,
 		 tgt_epoch);
 	memset(&req, 0x00, sizeof(req));
-	stale_object2oid(&req, oid, tgt_epoch);
+	stale_oid2object(&req, oid, tgt_epoch);
 	make_kinetic_req(drv, &req, 0, NULL);
 	req.metaData.metadataOnly = true;
 	if ((status = KineticClient_Put(&(req.op), &(req.metaData)))
@@ -593,19 +672,10 @@ int kinetic_remove_object(uint64_t oid, uint8_t ec_index)
 {
 	struct kinetic_req req;
 	struct kinetic_drive *drv = NULL;
-	KineticStatus status;
 	if (uatomic_is_true(&sys->use_journal))
 		journal_remove_object(oid);
 
-	memset(&req, 0x00, sizeof(req));
-	object2oid(&req, oid);
-	make_kinetic_req(drv, &req,   0, NULL);
-	if ((status = KineticClient_Delete(&(req.op), &(req.metaData)))
-		 != KINETIC_STATUS_SUCCESS){
-		sd_err("failed to delete  object %"PRIx64, oid);
-		return SD_RES_NETWORK_ERROR;                                                                                              
-	}
-	return SD_RES_SUCCESS;
+	return kinetic_delete(drv, &req, oid);
 }
 
 
@@ -639,14 +709,14 @@ int kinetic_get_hash(uint64_t oid, uint32_t epoch, uint8_t *sha1)
 	bool is_readonly_obj = oid_is_readonly(oid);
 
 	memset(&req, 0x00, sizeof(req));
-	object2oid(&req, oid);
+	oid2object(&req, oid, 0, OBJECT_OID_PREFIX);
 	make_kinetic_req(drv, &req,  0, NULL);
    	req.metaData.metadataOnly = true;
 	status = KineticClient_Get(&(req.op), &(req.metaData));
 	if (unlikely(status != KINETIC_STATUS_SUCCESS)) {
 		sd_debug("not found object %"PRIx64 , oid);
 		memset(&req, 0x00, sizeof(req));
-		stale_object2oid(&req, oid, epoch);
+		stale_oid2object(&req, oid, epoch);
 		make_kinetic_req(drv, &req,  0, NULL);
 		status = KineticClient_Get(&(req.op), &(req.metaData));
 		if (unlikely(status != KINETIC_STATUS_SUCCESS)) {
@@ -823,7 +893,7 @@ int kinetic_update_epoch_log(uint32_t epoch, struct sd_node *nodes, size_t nr_no
 				0, sizeof(struct rb_node));
 
 	memset(&req, 0x00, sizeof(req));
-	epoch2oid(&req, epoch);
+	epoch2object(&req, epoch);
 	make_kinetic_req(drv, &req,  len, (uint8_t *)buf);
 	if ((status = KineticClient_Put(&(req.op), &(req.metaData)))
 		 != KINETIC_STATUS_SUCCESS){
@@ -845,7 +915,7 @@ int kinetic_do_epoch_log_read(uint32_t epoch, struct sd_node *nodes, int len,
 	buf_len = len + sizeof(*timestamp);
 	char *buf = malloc(buf_len);
 	memset(&req, 0x00, sizeof(req));
-	epoch2oid(&req, epoch);
+	epoch2object(&req, epoch);
 	make_kinetic_req(drv, &req,  len, (uint8_t *)buf);
 	if ((status = KineticClient_Get(&(req.op), &(req.metaData)))
 		 != KINETIC_STATUS_SUCCESS){
@@ -872,7 +942,7 @@ uint32_t kinetic_get_latest_epoch(void)
 	struct kinetic_drive *drv =  addr2drv(NULL);
 	KineticStatus status;
 	memset(&req, 0x00, sizeof(req));
-	epoch2oid(&req, EPOCH_START);
+	epoch2object(&req, EPOCH_START);
 	make_kinetic_req(drv, &req,  0, NULL);
 	//status = KineticClient_(&(req.op), &(req.metaData));
 	req.metaData.metadataOnly = true;
@@ -1040,7 +1110,7 @@ int kinetic_remove_epoch(uint32_t epoch)
 	KineticStatus status;
 	sd_debug("remove epoch %"PRIu32, epoch);
 	memset(&req, 0x00, sizeof(req));
-	epoch2oid(&req, epoch);
+	epoch2object(&req, epoch);
 	make_kinetic_req(drv, &req, 0, NULL);
 	if ((status = KineticClient_Delete(&(req.op), &(req.metaData)))
 		 != KINETIC_STATUS_SUCCESS){
@@ -1069,3 +1139,13 @@ int kinetic_init_global_pathnames(const char *d, char *argp)
 			return -1;
 	return 0;
 }
+
+/*===================== STORING Large Objects ====================
+ *Object in sheepdog may be over 1MB limit iposed by Kinetic. Additional keys are generated as follows:
+ * First Key for a Large Object: Derived form OID such as "OBJ":{OID}
+ * Subsequent Keys: "SEG":{OID}:{SEG ID}
+ * The first segment is zero and is the main key
+ * Subsequent segmenst are numbered as 1,2,3...n
+ * Tag filed in the ,etadata is used to store additional information
+ */
+
