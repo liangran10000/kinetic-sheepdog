@@ -1,0 +1,15 @@
+Installation
+The kinetic store introduced into Sheepdog  uses Kinetic C API library which is required to build Kinetic Sheepdog.
+Follow the Sheepdog installation to install Kinetic Sheepdog.
+
+Deployment
+Kinetic Sheepdog cluster is deployed using the following command:
+sheep -d {directory for Unix sockets } -s kinetic {Kinetic Drive IP Address}:{Kinetic Drive IP Port}
+[{,}Kinetic Drive IP Address}:{Kinetic Drive IP Port}...]
+
+Cluster can be formatted using the following command:
+dog format cluster -b kinetic -c 1
+Once cluster is formatted use the Sheepdog commands 
+
+
+

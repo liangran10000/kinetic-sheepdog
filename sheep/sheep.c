@@ -124,7 +124,9 @@ static struct sd_option sheep_options[] = {
 	 "specify the cluster driver (default: "DEFAULT_CLUSTER_DRIVER")",
 	 cluster_help},
 	{'D', "directio", false, "use direct IO for backend store"},
+	{'d', "directiory", true, "directory for the unix sockets"},
 	{'g', "gateway", false, "make the program run as a gateway mode"},
+
 	{'h', "help", false, "display this help and exit"},
 	{'i', "ioaddr", true, "use separate network card to handle IO requests"
 	 " (default: disabled)", ioaddr_help},
@@ -575,7 +577,8 @@ static int lock_and_daemon(bool daemonize, const char *base_dir)
 		}
 	}
 
-	if ((ret = lock_base_dir(base_dir)) < 0) {
+	if ( !(sys->store & STORE_FLAG_KINETIC) &&
+			(ret = lock_base_dir(base_dir)) < 0) {
 		sd_err("locking directory: %s failed", base_dir);
 		status = 1;
 		goto end;
@@ -600,7 +603,10 @@ end:
 
 	return status;
 }
-
+static bool dir_is_valid(char *path)
+{
+   return (access(path, R_OK | W_OK) < 0 ? false : true);
+}
 static void sighup_handler(int signum)
 {
 	if (unlikely(logger_pid == -1))
@@ -764,6 +770,11 @@ int main(int argc, char **argv)
 					exit(1);
 			store = optarg;
 			break;
+		case 'd':
+			if (!dir_is_valid(optarg))
+					exit(1);
+			dir = optarg;
+			break;
 		default:
 			usage(1);
 			break;
@@ -829,13 +840,16 @@ int main(int argc, char **argv)
 			exit(1);
 		}
 	}
-	if(init_base_path(dirp))
-		exit(1);
-	if ((dir = realpath( dirp, NULL)) == NULL)
+	if (!(sys->store & STORE_FLAG_KINETIC)) {
+		if(init_base_path(dirp))
 			exit(1);
+		if ((dir = realpath( dirp, NULL)) == NULL)
+			exit(1);
+	}
 	snprintf(log_path, sizeof(log_path), "%s/" LOG_FILE_NAME,
 		 logdir ?: dir);
-	free(logdir);
+	if (logdir)
+		free(logdir);
 	srandom(port);
 	if (lock_and_daemon(log_dst_type != LOG_DST_STDOUT, dir)) {
 		free(argp);

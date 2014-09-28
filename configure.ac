@@ -89,6 +89,7 @@ AM_MISSING_PROG(AUTOM4TE, autom4te, $missing_dir)
 # Checks for libraries.
 AC_CHECK_LIB([socket], [socket])
 AC_CHECK_LIB([rt], [clock_gettime], , AC_MSG_ERROR(librt not found))
+# AC_CHECK_LIB([kinetic-c-client], [KineticClient_Put], , AC_MSG_ERROR(libkinetic-c-client not found))
 
 # Checks for header files.
 AC_FUNC_ALLOCA
@@ -128,6 +129,8 @@ AC_SUBST(SIZEOF_LONG_LONG)
 AC_CHECK_HEADERS([sys/eventfd.h])
 AC_CHECK_HEADERS([sys/signalfd.h])
 AC_CHECK_HEADERS([sys/timerfd.h])
+AC_CHECK_HEADERS([kinetic_client.h])
+AC_CHECK_HEADERS([kinetic_types.h])
 
 # Checks for library functions.
 AC_FUNC_CLOSEDIR_VOID

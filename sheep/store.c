@@ -234,7 +234,7 @@ static int init_obj_path(const char *base_path, char *argp)
 	if (check_path_len(base_path) < 0)
 		return -1;
 	if(sys->store & STORE_FLAG_KINETIC)
-				return kinetic_init_obj_path(base_path, argp);
+				return kinetic_init_obj_path( argp);
 
 #define OBJ_PATH "/obj"
 	len = strlen(base_path) + strlen(OBJ_PATH) + 1;
