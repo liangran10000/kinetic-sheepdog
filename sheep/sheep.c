@@ -996,7 +996,8 @@ cleanup_log:
 	log_close();
 
 cleanup_dir:
-	free(dir);
+	if (!(sys->store & STORE_FLAG_KINETIC) && dir)
+		free(dir);
 
 	return rc;
 }
