@@ -137,51 +137,58 @@ static KineticStatus kinetic_put(struct kinetic_drive *drv,
 		struct kinetic_req *req, uint64_t oid, uint32_t len, uint8_t *buf)
 {  
 	KineticStatus status;
-	uint32_t i, seg_length, segs = len/KINETIC_OBJECT_LIMIT;
+	uint32_t i, segs = len/KINETIC_OBJECT_LIMIT;
+	if (len % KINETIC_OBJECT_LIMIT) segs++;
 	req->tag.size = len;
 	req->tag.segs = segs;
-	for (i = 0; i <= segs; i ++) {
+	for (i = 0; i < segs; i ++) {
 		oid2object(req, oid, i, OBJECT_OID_PREFIX);
-		req->tag.seg_size = seg_length = len < KINETIC_OBJECT_LIMIT ?  len : KINETIC_OBJECT_LIMIT;
-		make_kinetic_req(drv, req, seg_length, buf);
+		req->tag.seg_size =  MIN(len, KINETIC_OBJECT_LIMIT);
+		make_kinetic_req(drv, req, req->tag.seg_size, buf);
 		if ((status = KineticClient_Put(drv->handle, &(req->metaData)))
 			 != KINETIC_STATUS_SUCCESS){
 			sd_err("failed to write object %"PRIx64, oid);
 			return SD_RES_NETWORK_ERROR;                                                                                              
 		}
-		len -= seg_length;
-		buf += seg_length;
+		len -= req->tag.seg_size;
+		buf += req->tag.seg_size;
 	}
 	return SD_RES_SUCCESS;
 }
 
 
-static KineticStatus kinetic_get(struct kinetic_drive *drv, 
+static int kinetic_get(struct kinetic_drive *drv,
 		struct kinetic_req *req, uint64_t oid, uint32_t len, uint8_t *buf, uint32_t offset)
 {  
 	KineticStatus status;
-	uint32_t i = 0, segs = 0, read_size = len + offset;
-	oid2object(req, oid, segs, OBJECT_OID_PREFIX);
-	make_kinetic_req(drv, req, len,  buf);
-	if ((status = KineticClient_Get(drv->handle, &(req->metaData)))
-		 != KINETIC_STATUS_SUCCESS){
+	uint32_t i = 0, segs = 0, read_size = 0, req_len;
+	assert(offset == 0);
+	req_len = MIN(len, KINETIC_OBJECT_LIMIT);
+	oid2object(req, oid, i++, OBJECT_OID_PREFIX);
+	make_kinetic_req(drv, req, req_len,  buf);
+	if (len == 0)
+		req->metaData.metadataOnly = true;
+	status = KineticClient_Get(drv->handle, &(req->metaData));
+	if ( (status != KINETIC_STATUS_SUCCESS) &&
+			(status != KINETIC_STATUS_BUFFER_OVERRUN)) {
 		sd_err("failed to write %d object %"PRIx64, read_size, oid);
 		return SD_RES_NETWORK_ERROR;                                                                                              
 	}
+	read_size += req_len;
     segs = req->tag.segs;
-	for (i = 1; i <= segs; i++) {
-		buf += req->tag.seg_size;
-		if (len > req->tag.seg_size) 
-				len -=req->tag.seg_size;
-		else
-			return SD_RES_BUFFER_SMALL;
-		oid2object(req, oid, i, OBJECT_OID_PREFIX);
-		make_kinetic_req(drv, req, len,  buf);
-		if ((status = KineticClient_Get(drv->handle, &(req->metaData)))
-			 != KINETIC_STATUS_SUCCESS){
+	while (read_size < len) {
+		req_len = MIN((len - read_size), KINETIC_OBJECT_LIMIT);
+		buf += req_len;
+		assert(i <= segs);
+		oid2object(req, oid, i++, OBJECT_OID_PREFIX);
+		make_kinetic_req(drv, req, req_len,  buf);
+		status = KineticClient_Get(drv->handle, &(req->metaData));
+		if ( (status != KINETIC_STATUS_SUCCESS) &&
+					(status != KINETIC_STATUS_BUFFER_OVERRUN)){
 			sd_err("failed to write object %"PRIx64, oid);
 			return SD_RES_NETWORK_ERROR;                                                                                              
 		}
+		read_size += req_len;
 	}
 	return SD_RES_SUCCESS;
 }
@@ -196,11 +203,12 @@ static KineticStatus kinetic_delete(struct kinetic_drive *drv,
    	req->metaData.metadataOnly = true;
 	if ((status = KineticClient_Get(drv->handle, &(req->metaData)))
 			 != KINETIC_STATUS_SUCCESS){
-			sd_err("failed to write object %"PRIx64, oid);
+			sd_err("failed to get metadata for  object %"PRIx64, oid);
 			return SD_RES_NETWORK_ERROR;                                                                                              
 	}
     segs = req->tag.segs;
-	for (i = 1; i <= segs; i++) {
+	assert(segs);
+	for (i = 0; i < segs; i++) {
 		oid2object(req, oid, i, OBJECT_OID_PREFIX);
 		make_kinetic_req(drv, req,   0, NULL);
 		if ((status = KineticClient_Delete(drv->handle, &(req->metaData)))
@@ -305,8 +313,8 @@ bool kinetic_exist(uint64_t oid, uint8_t ec_index)
 	make_kinetic_req(drv, req, 0, NULL);
 	req->metaData.force = false;
    	req->metaData.metadataOnly = true;
-	if ((status = KineticClient_Get(drv->handle, &(req->metaData)))
-			 == KINETIC_STATUS_SUCCESS)
+	status = KineticClient_Get(drv->handle, &(req->metaData));
+	if ( (status == KINETIC_STATUS_SUCCESS) || (status == KINETIC_STATUS_BUFFER_OVERRUN))
 		ret = true;
 	else 
 		ret = false;
@@ -653,6 +661,8 @@ int kinetic_link(uint64_t oid, uint32_t tgt_epoch)
 
 	sd_debug("try link %"PRIx64" from snapshot with epoch %d", oid,
 		 tgt_epoch);
+	memset(req, 0x00, sizeof(*req));
+	req->tag.segs = 1;
 	stale_oid2object(req, oid, tgt_epoch);
 	make_kinetic_req(drv, req, 0, NULL);
 	req->metaData.metadataOnly = true;
@@ -921,7 +931,7 @@ int kinetic_init_config_file(const char *d, char *argp)
 	status = KineticClient_Get(drv->handle, &(req->metaData));
 	if (unlikely(status != KINETIC_STATUS_SUCCESS)) {
 		sd_err("failed to read object %s", config_path);
-		goto exit_init_config_file;
+		//goto exit_init_config_file;
 	}
 	kinetic_get_cluster_config(&sys->cinfo);
 	if ((config.flags & SD_CLUSTER_FLAG_DISKMODE) !=
@@ -953,6 +963,7 @@ int kinetic_write_config(const char *buf, size_t len, bool force_create)
 		return -1;
 	}
 	memset(req, 0x00, sizeof(*req));
+	req->tag.segs = 1;
 	config2oid(req);
 	make_kinetic_req(drv, req, len, (uint8_t *)buf);
 	status = KineticClient_Put(drv->handle, &(req->metaData));
@@ -991,6 +1002,8 @@ int kinetic_update_epoch_log(uint32_t epoch, struct sd_node *nodes, size_t nr_no
 				+ offsetof(struct sd_node, rb),
 				0, sizeof(struct rb_node));
 
+	memset(req, 0x00, sizeof(*req));
+	req->tag.segs = 1;
 	epoch2object(req, epoch);
 	make_kinetic_req(drv, req,  len, (uint8_t *)buf);
 	if ((status = KineticClient_Put(drv->handle, &(req->metaData)))
