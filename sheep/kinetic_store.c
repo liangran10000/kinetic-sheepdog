@@ -1159,9 +1159,9 @@ int kinetic_init_obj_path(char *drive)
 	char *p;
 	char buf[PATH_MAX];
 
+KineticStatus KineticClient_Init(const char *logFile, int logLevel);
 	if (kinetic_check_path_len(drive) < 0)
 		return -1;
-
     strncpy(buf, drive, sizeof(buf));
 	/* Eat up the first component */
 	strtok(buf, ",");
@@ -1247,11 +1247,13 @@ int kinetic_init_global_pathnames(const char *d, char *argp)
 #define KINETIC_LOG_FILE 		"kinetic.log"
 
 	/* initialize kinetic */
-	//KineticClient_Init(KINETIC_LOG_FILE);
+	KineticClient_Init(KINETIC_LOG_FILE, 0);
 
 	if (kinetic_init_obj_path(argp) || kinetic_init_epoch_path(d, argp) ||
-		kinetic_init_config_path(d, argp))
-			return -1;
+		kinetic_init_config_path(d, argp)) {
+		KineticClient_DeInit();
+		return -1;
+	}
 	return 0;
 }
 
