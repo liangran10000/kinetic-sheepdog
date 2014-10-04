@@ -9,7 +9,8 @@ sheep -d {directory for Unix sockets } -s kinetic {Kinetic Drive IP Address}:{Ki
 
 Cluster can be formatted using the following command:
 dog format cluster -b kinetic -c 1
-Once cluster is formatted use the Sheepdog commands 
+Once cluster is formatted use the Sheepdog commands  such as "dog vdi list",
+"dog vdi create {vdi name }" etc
 
 
 
