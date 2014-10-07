@@ -1,6 +1,9 @@
 Installation
 The kinetic store introduced into Sheepdog  uses Kinetic C API library which is required to build Kinetic Sheepdog.
-Follow the Sheepdog installation to install Kinetic Sheepdog.
+Follow the Sheepdog installation to install Kinetic Sheepdog. 
+
+Kinetic C API library supporting sheepdog can be found under ./klib directory.
+
 
 Deployment
 Kinetic Sheepdog cluster is deployed using the following command:
@@ -11,6 +14,9 @@ Cluster can be formatted using the following command:
 dog format cluster -b kinetic -c 1
 Once cluster is formatted use the Sheepdog commands  such as "dog vdi list",
 "dog vdi create {vdi name }" etc
+
+This alpha code is still work in progress and supports only a few basic commands such as "create" "delete", list.
+
 
 
 
