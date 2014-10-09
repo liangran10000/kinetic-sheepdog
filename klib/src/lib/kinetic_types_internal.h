@@ -27,7 +27,7 @@
 #include <openssl/sha.h>
 #include <pthread.h>
 #include <time.h>
-#include "list.h"
+#include "kinetic_list.h"
 #define KINETIC_SESSIONS_MAX (6)
 #define KINETIC_PDUS_PER_SESSION_DEFAULT (2)
 #define KINETIC_PDUS_PER_SESSION_MAX (10)
@@ -55,7 +55,7 @@ typedef struct _KineticConnection {
     int     socket;          // socket file descriptor
     int64_t connectionID;    // initialized to seconds since epoch
     int64_t sequence;        // increments for each request in a session
-    struct list_head  pdus;  // list of dynamically allocated PDUs
+    struct kinetic_list_head  pdus;  // list of dynamically allocated PDUs
     KineticSession session;  // session configuration
 	pthread_mutex_t mutex;
 } KineticConnection;

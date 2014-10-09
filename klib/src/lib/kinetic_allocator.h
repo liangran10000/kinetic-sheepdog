@@ -21,9 +21,9 @@
 #ifndef _KINETIC_ALLOCATOR_H
 #define _KINETIC_ALLOCATOR_H
 #include "kinetic_types_internal.h"
-#include "list.h"
+#include "kinetic_list.h"
 typedef struct _KineticPDUItem {
-		struct list_node		list;
+		struct kinetic_list_node		kinetic_list;
 		KineticPDU				PDU;
 }KineticPDUItem;
 

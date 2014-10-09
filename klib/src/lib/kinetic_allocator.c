@@ -22,8 +22,8 @@
 #include "kinetic_logger.h"
 #include <stdlib.h>
 #include "kinetic_connection.h"
-STATIC LIST_HEAD (PDUList); //= {.start = NULL, .last = NULL};
-#define PDU2LIST(pdu) ( ((uint8_t *)(pdu)) - sizeof( struct list_node))
+STATIC KINETIC_LIST_HEAD (PDUList); //= {.start = NULL, .last = NULL};
+#define PDU2LIST(pdu) ( ((uint8_t *)(pdu)) - sizeof( struct kinetic_list_node))
 
 KineticPDU* KineticAllocator_NewPDU(KineticConnection *connection)
 {
@@ -31,7 +31,7 @@ KineticPDU* KineticAllocator_NewPDU(KineticConnection *connection)
    assert(item);
    item->PDU.proto = NULL;
 	KineticConnection_Lock(connection);
-   list_add(&item->list, &PDUList);
+   kinetic_list_add(&item->kinetic_list, &PDUList);
    KineticConnection_Unlock(connection);
    return &item->PDU;
 
@@ -46,7 +46,7 @@ void KineticAllocator_FreePDU(KineticPDU* pdu, KineticConnection *connection)
     };
 	KineticPDUItem *item = (KineticPDUItem *)PDU2LIST(pdu);
 	KineticConnection_Lock(connection);
-	list_del( &item->list);
+	kinetic_list_del( &item->kinetic_list);
 	KineticConnection_Unlock(connection);
 	free(item);
 }
@@ -55,13 +55,13 @@ void KineticAllocator_FreeAllPDUs(KineticConnection *connection)
 {
 	KineticPDUItem *item;
 	KineticConnection_Lock(connection);
-	while (!list_empty(&connection->pdus)) {
+	while (!kinetic_list_empty(&connection->pdus)) {
     	item = (KineticPDUItem *)(connection->pdus.n.next);
 	 	KineticPDU *pdu = &item->PDU; 
         if ( pdu->proto != NULL && pdu->protobufDynamicallyExtracted) {
                KineticProto__free_unpacked(pdu->proto, NULL);
          }
-	  	list_del(&item->list);
+	  	kinetic_list_del(&item->kinetic_list);
 		free(item);
 	}
 	KineticConnection_Unlock(connection);
@@ -71,7 +71,7 @@ bool KineticAllocator_ValidateAllMemoryFreed(KineticConnection *connection)
 {
 	bool rc;
 	KineticConnection_Lock(connection);
-    rc = list_empty(&connection->pdus);
+    rc = kinetic_list_empty(&connection->pdus);
 	KineticConnection_Unlock(connection);
 	return rc;
 }
