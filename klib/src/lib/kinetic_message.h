@@ -24,10 +24,13 @@
 #include "kinetic_types_internal.h"
 #include "kinetic_hmac.h"
 
-void KineticMessage_Init(KineticMessage* const message);
+void KineticMessage_Init(KineticMessage* const msg,
+    				KineticProto_MessageType msg_type);
 void KineticMessage_ConfigureKeyValue(KineticMessage* const message,
                                       const KineticEntry* entry);
 void KineticMessage_ConfigureKeyRange(KineticMessage* const message,
                                       const KineticRange* range);
 
+void KineticMessage_HeaderInit(KineticProto_Header *header, 
+							KineticConnection *connection);
 #endif // _KINETIC_MESSAGE_H

@@ -22,7 +22,7 @@
 #define _KINETIC_PDU_H
 
 #include "kinetic_types_internal.h"
-
+#include "kinetic_proto.h"
 void KineticPDU_Init(KineticPDU* const pdu, KineticConnection* const connection);
 void KineticPDU_AttachEntry(KineticPDU* const pdu, KineticEntry* const entry);
 KineticStatus KineticPDU_Send(KineticPDU* request);
@@ -30,5 +30,9 @@ KineticStatus KineticPDU_Receive(KineticPDU* response);
 KineticStatus KineticPDU_GetStatus(KineticPDU* pdu);
 KineticProto_KeyValue* KineticPDU_GetKeyValue(KineticPDU* pdu);
 KineticStatus KineticPDU_GetKeyRange(KineticPDU* pdu, KineticRange *range);
+void KineticPDU_HeaderInit(KineticPDUHeader *header);
+void KineticPDU_HeaderInit(KineticPDUHeader *header);
+void  KineticPDU_InitWithMessage(KineticPDU * const pdu, KineticConnection* const connection,
+    				KineticProto_MessageType msg_type);
 
 #endif // _KINETIC_PDU_H

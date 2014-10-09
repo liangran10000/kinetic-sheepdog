@@ -26,11 +26,12 @@
 #include "kinetic_message.h"
 #include "kinetic_pdu.h"
 #include "kinetic_logger.h"
+#include "kinetic_allocator.h"
 #include <stdlib.h>
 
 static KineticStatus KineticClient_CreateOperation(
     KineticOperation* const operation,
-    KineticSessionHandle handle)
+    KineticSessionHandle handle, KineticProto_MessageType msg_type)
 {
     if (handle == KINETIC_HANDLE_INVALID) {
         LOG("Specified session has invalid handle value");
@@ -43,7 +44,7 @@ static KineticStatus KineticClient_CreateOperation(
         return KINETIC_STATUS_SESSION_INVALID;
     }
 
-    *operation = KineticOperation_Create(connection);
+    *operation = KineticOperation_Create(connection, msg_type);
     if (operation->request == NULL || operation->response == NULL) {
         return KINETIC_STATUS_NO_PDUS_AVAVILABLE;
     }
@@ -147,6 +148,7 @@ KineticStatus KineticClient_Disconnect(KineticSessionHandle* const handle)
         LOG("Disconnection failed!");
     }
 
+    KineticAllocator_FreeAllPDUs(connection);
     KineticConnection_FreeConnection(handle);
     *handle = KINETIC_HANDLE_INVALID;
 
@@ -158,7 +160,8 @@ KineticStatus KineticClient_NoOp(KineticSessionHandle handle)
     KineticStatus status;
     KineticOperation operation;
 
-    status = KineticClient_CreateOperation(&operation, handle);
+    status = KineticClient_CreateOperation(&operation, handle, 
+			 KINETIC_PROTO_MESSAGE_TYPE_NOOP);
     if (status != KINETIC_STATUS_SUCCESS) {
         return status;
     }
@@ -180,7 +183,8 @@ KineticStatus KineticClient_Put(KineticSessionHandle handle,
     KineticStatus status;
     KineticOperation operation;
 
-    status = KineticClient_CreateOperation(&operation, handle);
+    status = KineticClient_CreateOperation(&operation, handle,
+			 KINETIC_PROTO_MESSAGE_TYPE_PUT);
     if (status != KINETIC_STATUS_SUCCESS) {
         return status;
     }
@@ -215,7 +219,8 @@ KineticStatus KineticClient_Get(KineticSessionHandle handle,
     KineticStatus status;
     KineticOperation operation;
 
-    status = KineticClient_CreateOperation(&operation, handle);
+    status = KineticClient_CreateOperation(&operation, handle,
+			 KINETIC_PROTO_MESSAGE_TYPE_GET);
     if (status != KINETIC_STATUS_SUCCESS) {
         return status;
     }
@@ -249,7 +254,8 @@ KineticStatus KineticClient_Delete(KineticSessionHandle handle,
     KineticStatus status;
     KineticOperation operation;
 
-    status = KineticClient_CreateOperation(&operation, handle);
+    status = KineticClient_CreateOperation(&operation, handle,
+			 KINETIC_PROTO_MESSAGE_TYPE_GET);
     if (status != KINETIC_STATUS_SUCCESS) {
         return status;
     }
@@ -284,7 +290,8 @@ KineticStatus KineticClient_GetRange(KineticSessionHandle handle,
     assert(range != NULL );
     KineticStatus status;
     KineticOperation operation;
-    status = KineticClient_CreateOperation(&operation, handle);
+    status = KineticClient_CreateOperation(&operation, handle,
+			 KINETIC_PROTO_MESSAGE_TYPE_GETKEYRANGE);
     if (status != KINETIC_STATUS_SUCCESS) {
         return status;
     }

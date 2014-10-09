@@ -22,8 +22,9 @@
 #define _KINETIC_OPERATION_H
 
 #include "kinetic_types_internal.h"
-
-KineticOperation KineticOperation_Create(KineticConnection* const connection);
+#include "kinetic_proto.h"
+KineticOperation KineticOperation_Create(KineticConnection* const connection,
+				KineticProto_MessageType msg_type);
 KineticStatus KineticOperation_Free(KineticOperation* const operation);
 KineticStatus KineticOperation_GetStatus(const KineticOperation* const operation);
 

@@ -156,7 +156,8 @@ typedef enum {
     KINETIC_STATUS_MEMORY_ERROR,        // Failed allocating/deallocating memory
     KINETIC_STATUS_SOCKET_TIMEOUT,      // A timeout occurred while waiting for a socket operation
     KINETIC_STATUS_SOCKET_ERROR,        // An I/O error occurred during a socket operation
-    KINETIC_STATUS_COUNT                // Number of status codes in KineticStatusDescriptor
+    KINETIC_STATUS_COUNT,               // Number of status codes in KineticStatusDescriptor
+	KINETIC_STATUS_INTERNAL_ERROR		// internal error
 } KineticStatus;
 extern const char* KineticStatusDescriptor[];
 
@@ -180,12 +181,12 @@ typedef struct _KineticEntry {
 typedef struct _KineticRange {
     ByteBuffer startKey;
     ByteBuffer endKey;
-    ByteBuffer value; /* memory provided by the caller for the keys */
     bool 	   startKeyInclusive;
     bool 	   endKeyInclusive;
 	bool	   reverse;
 	int		   maxRequested;
 	int		   returned;
+	ByteBuffer *keys;
 } KineticRange;
 
 

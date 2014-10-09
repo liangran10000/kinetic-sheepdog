@@ -22,7 +22,7 @@
 // #include "zlog/zlog.h"
 #include <stdio.h>
 #include <string.h>
-
+#define BUFFER_SIZE 1024
 static char LogFile[256] = "";
 bool LogToConsole = true;
 int LogLevel = 0;
@@ -85,7 +85,7 @@ int KineticLogger_LogPrintf(const char* format, ...)
     if (LogLevel >= 0) {
         if (format != NULL) {
             va_list arg_ptr;
-            char buffer[1024];
+            char buffer[BUFFER_SIZE + 8];
             va_start(arg_ptr, format);
             result = vsprintf(buffer, format, arg_ptr);
             KineticLogger_Log(buffer);
@@ -143,6 +143,7 @@ int KineticLogger_u8toa(char* p_buf, uint8_t val)
     return width;
 }
 
+/* FIXME p_buf points to 1K memory */
 int KineticLogger_ByteArraySliceToCString(char* p_buf,
         const ByteArray bytes, const int start, const int count)
 {
@@ -153,6 +154,7 @@ int KineticLogger_ByteArraySliceToCString(char* p_buf,
         p_buf[len++] = '\\';
         // LOGF("BYTE digits to 0x%llX", (long long)(&p_buf[len]));
         len += KineticLogger_u8toa(&p_buf[len], bytes.data[start + i]);
+		if (len >= BUFFER_SIZE) break; 
         // LOGF("BYTE next @ 0x%llX", (long long)(&p_buf[len]));
     }
     p_buf[len] = '\0';

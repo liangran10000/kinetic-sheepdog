@@ -21,10 +21,69 @@
 #include "kinetic_message.h"
 #include "kinetic_logger.h"
 
-void KineticMessage_Init(KineticMessage* const message)
+void KineticMessage_HeaderInit(KineticProto_Header *header, KineticConnection *connection)
 {
-    assert(message != NULL);
-    KINETIC_MESSAGE_INIT(message);
+		assert(header != NULL && connection != NULL);
+		KineticProto_header__init(header);
+		header->has_clusterVersion = header->has_identity = header->has_connectionID = true;
+		header->has_sequence = true;
+		header->clusterVersion = connection->session.clusterVersion;
+		header->identity = connection->session.identity;
+		header->connectionID = connection->connectionID;
+		header->sequence = connection->sequence;
+}
+
+void KineticMessage_Init(KineticMessage* const msg,
+    				KineticProto_MessageType msg_type)
+
+{
+    assert(msg != NULL);
+    KineticProto__init(&msg->proto); 
+    KineticProto_command__init(&msg->command); 
+    KineticProto_header__init(&msg->header); 
+    KineticProto_status__init(&msg->status); 
+    KineticProto_body__init(&(msg)->body);
+	switch(msg_type) {
+			case KINETIC_PROTO_MESSAGE_TYPE_GETKEYRANGE:
+    		case KINETIC_PROTO_MESSAGE_TYPE_GETKEYRANGE_RESPONSE:
+    			KineticProto_range__init(&(msg)->range);
+				break; 
+    		case KINETIC_PROTO_MESSAGE_TYPE_GET:
+    		case KINETIC_PROTO_MESSAGE_TYPE_GET_RESPONSE:
+    		case KINETIC_PROTO_MESSAGE_TYPE_PUT:
+    		case KINETIC_PROTO_MESSAGE_TYPE_PUT_RESPONSE:
+    		case KINETIC_PROTO_MESSAGE_TYPE_DELETE:
+    		case KINETIC_PROTO_MESSAGE_TYPE_DELETE_RESPONSE:
+    			KineticProto_key_value__init(&(msg)->keyValue); 
+				break;
+    		case KINETIC_PROTO_MESSAGE_TYPE_INVALID_MESSAGE_TYPE:
+    		case KINETIC_PROTO_MESSAGE_TYPE_GETNEXT:
+    		case KINETIC_PROTO_MESSAGE_TYPE_GETNEXT_RESPONSE:
+    		case KINETIC_PROTO_MESSAGE_TYPE_GETPREVIOUS:
+    		case KINETIC_PROTO_MESSAGE_TYPE_GETPREVIOUS_RESPONSE:
+    		case KINETIC_PROTO_MESSAGE_TYPE_GETVERSION:
+    		case KINETIC_PROTO_MESSAGE_TYPE_GETVERSION_RESPONSE:
+    		case KINETIC_PROTO_MESSAGE_TYPE_SETUP:
+    		case KINETIC_PROTO_MESSAGE_TYPE_SETUP_RESPONSE:
+    		case KINETIC_PROTO_MESSAGE_TYPE_GETLOG:
+    		case KINETIC_PROTO_MESSAGE_TYPE_GETLOG_RESPONSE:
+    		case KINETIC_PROTO_MESSAGE_TYPE_SECURITY:
+    		case KINETIC_PROTO_MESSAGE_TYPE_SECURITY_RESPONSE:
+    		case KINETIC_PROTO_MESSAGE_TYPE_PEER2PEERPUSH:
+    		case KINETIC_PROTO_MESSAGE_TYPE_PEER2PEERPUSH_RESPONSE:
+    		case KINETIC_PROTO_MESSAGE_TYPE_NOOP:
+    		case KINETIC_PROTO_MESSAGE_TYPE_NOOP_RESPONSE:
+    		case KINETIC_PROTO_MESSAGE_TYPE_FLUSHALLDATA:
+    		case KINETIC_PROTO_MESSAGE_TYPE_FLUSHALLDATA_RESPONSE:
+		default:
+			break;
+	}
+    memset(msg->hmacData, 0x00, SHA_DIGEST_LENGTH); 
+	msg->proto.hmac.data = msg->hmacData;
+    msg->proto.hmac.len = KINETIC_HMAC_MAX_LEN; 
+    msg->proto.has_hmac = true; 
+    msg->command.header = &msg->header; 
+    msg->proto.command = &msg->command; 
 }
 
 // e.g. CONFIG_FIELD_BYTE_BUFFER(key, message->keyValue, entry)
@@ -106,8 +165,10 @@ void KineticMessage_ConfigureKeyRange(KineticMessage* const message,
     message->range.startKeyInclusive = range->startKeyInclusive;
 
     message->range.maxReturned = range->maxRequested;
-    message->range.key->data = range->value.array.data;
-    message->range.key->len = range->value.array.len;
+    message->range.key = &(message->keyValue.key);
+    //message->keyValue.key.data = range->value.array.data;
+    //message->keyValue.key.len = range->value.array.len;
+
     //message->range->n_key =
     message->range.reverse = range->reverse;
 
@@ -116,5 +177,5 @@ void KineticMessage_ConfigureKeyRange(KineticMessage* const message,
     message->range.has_startKey = range->startKey.array.len ? true : false;
     message->range.has_startKeyInclusive = range->startKeyInclusive;
     message->range.has_endKeyInclusive = range->endKeyInclusive;
-    message->range.has_maxReturned = range->maxRequested;
+    message->range.has_maxReturned = range->maxRequested ?  true : false;
 }

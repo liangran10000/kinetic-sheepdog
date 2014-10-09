@@ -26,10 +26,21 @@
 #include "kinetic_logger.h"
 #include "kinetic_proto.h"
 
+void KineticPDU_HeaderInit(KineticPDUHeader *header)
+{
+	header->versionPrefix = 'F';
+}
 void KineticPDU_Init(KineticPDU* const pdu,
                      KineticConnection* const connection)
 {
-    KINETIC_PDU_INIT(pdu, connection);
+		assert(pdu != NULL && connection != NULL);
+		/* FIXME remove memset to improve performance */
+		memset(pdu, 0x00, sizeof(*pdu));
+		pdu->connection = connection;
+		KineticPDU_HeaderInit(&pdu->header);
+		KineticPDU_HeaderInit(&pdu->headerNBO);
+		KineticMessage_HeaderInit(&(pdu->protoData.message.header), connection);
+
 }
 
 void KineticPDU_AttachEntry(KineticPDU* const pdu, KineticEntry* const entry)
@@ -218,6 +229,32 @@ KineticProto_KeyValue* KineticPDU_GetKeyValue(KineticPDU* pdu)
 /*FIXME */
 KineticStatus KineticPDU_GetKeyRange(KineticPDU* pdu, KineticRange *range)
 {
-		range->returned = pdu->proto->command->body->range->n_key;
-		return KINETIC_STATUS_SUCCESS;
+		ByteBuffer *dest = range->keys;
+		if (pdu && pdu->proto && pdu->proto->command && pdu->proto->command->body &&
+				pdu->proto->command->body->range) {
+				int available  = (int)pdu->proto->command->body->range->n_key;
+    			ProtobufCBinaryData* src =  pdu->proto->command->body->range->key;
+				for (range->returned = 0;
+					range->returned < range->maxRequested && range->returned < available;  src++, dest++) {
+					if (dest->array.len < src->len) return KINETIC_STATUS_BUFFER_OVERRUN;
+					dest->bytesUsed = src->len;
+					memcpy(dest->array.data, src->data, src->len);
+					range->returned++;
+				}
+				return KINETIC_STATUS_SUCCESS;
+		}
+		return KINETIC_STATUS_INTERNAL_ERROR;
+}
+
+void  KineticPDU_InitWithMessage(KineticPDU * const pdu, KineticConnection* const connection,
+    				KineticProto_MessageType msg_type)
+{
+		KineticPDU_Init(pdu, connection);
+		pdu->proto = &(pdu->protoData.message.proto);
+		KineticMessage_Init(&(pdu->protoData.message), msg_type);
+		pdu->proto->command = &(pdu->protoData.message.command);
+		pdu->proto->command->header = &(pdu->protoData.message.header);
+		KineticMessage_HeaderInit(&(pdu->protoData.message.header), connection);
+
+
 }

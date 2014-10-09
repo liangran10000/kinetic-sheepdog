@@ -56,7 +56,7 @@ void KineticAllocator_FreeAllPDUs(KineticConnection *connection)
 	KineticPDUItem *item;
 	KineticConnection_Lock(connection);
 	while (!list_empty(&connection->pdus)) {
-    	item = connection->pdus.n.next;
+    	item = (KineticPDUItem *)(connection->pdus.n.next);
 	 	KineticPDU *pdu = &item->PDU; 
         if ( pdu->proto != NULL && pdu->protobufDynamicallyExtracted) {
                KineticProto__free_unpacked(pdu->proto, NULL);

@@ -31,5 +31,6 @@ KineticPDU* KineticAllocator_NewPDU(KineticConnection* const connection);
 void KineticAllocator_FreePDU(KineticPDU* pdu, KineticConnection* const connection);
 void KineticAllocator_FreeAllPDUs(KineticConnection* const connection);
 bool KineticAllocator_ValidateAllMemoryFreed(KineticConnection* const connection);
+void KineticAllocator_FreeAllPDUs(KineticConnection *connection);
 
 #endif // _KINETIC_ALLOCATOR

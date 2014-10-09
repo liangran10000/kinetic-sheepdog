@@ -24,6 +24,7 @@
 #include "kinetic_pdu.h"
 #include "kinetic_allocator.h"
 #include "kinetic_logger.h"
+#include "kinetic_proto.h"
 #include <stdlib.h>
 
 static void KineticOperation_ValidateOperation(KineticOperation* operation)
@@ -37,7 +38,8 @@ static void KineticOperation_ValidateOperation(KineticOperation* operation)
     assert(operation->response != NULL);
 }
 
-KineticOperation KineticOperation_Create(KineticConnection* const connection)
+KineticOperation KineticOperation_Create(KineticConnection* const connection,
+    				KineticProto_MessageType msg_type)
 {
     LOGF("\n"
          "--------------------------------------------------\n"
@@ -57,7 +59,7 @@ KineticOperation KineticOperation_Create(KineticConnection* const connection)
         };
     }
     KineticPDU_Init(operation.request, connection);
-    KINETIC_PDU_INIT_WITH_MESSAGE(operation.request, connection);
+	KineticPDU_InitWithMessage(operation.request, connection, msg_type);
     operation.request->proto = &operation.request->protoData.message.proto;
 
     if (operation.response == NULL) {
@@ -178,8 +180,11 @@ void KineticOperation_BuildGetRange(KineticOperation* const operation,
 
     operation->request->proto->command->header->messageType = KINETIC_PROTO_MESSAGE_TYPE_GETKEYRANGE;
     operation->request->proto->command->header->has_messageType = true;
-    operation->request->value = range->value;
-    operation->response->value = range->value;
+    //operation->request->value = range->value;
+    //operation->response->value = range->value;
     KineticMessage_ConfigureKeyRange(&operation->request->protoData.message, range);
+    operation->request->value = BYTE_BUFFER_NONE;
+    operation->response->value = BYTE_BUFFER_NONE;
+    //operation->response->value = range->value;
 
 }
