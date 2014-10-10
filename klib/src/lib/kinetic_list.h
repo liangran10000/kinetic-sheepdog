@@ -21,13 +21,13 @@ struct kinetic_list_head {
 #define KINETIC_LIST_NODE(name) \
 	struct kinetic_list_node name = KINETIC_LIST_NODE_INIT
 
-static inline void INIT_KINETIC_LIST_HEAD(struct kinetic_list_head *kinetic_list)
+inline void init_kinetic_list_head(struct kinetic_list_head *kinetic_list)
 {
 	kinetic_list->n.next = &kinetic_list->n;
 	kinetic_list->n.prev = &kinetic_list->n;
 }
 
-static inline void INIT_KINETIC_LIST_NODE(struct kinetic_list_node *kinetic_list)
+inline void INIT_KINETIC_LIST_NODE(struct kinetic_list_node *kinetic_list)
 {
 	kinetic_list->next = NULL;
 	kinetic_list->prev = NULL;
@@ -135,7 +135,7 @@ static inline void kinetic_list_splice_init(struct kinetic_list_head *kinetic_li
 {
 	if (!kinetic_list_empty(kinetic_list)) {
 		__kinetic_list_splice(kinetic_list, &head->n, head->n.next);
-		INIT_KINETIC_LIST_HEAD(kinetic_list);
+		init_kinetic_list_head(kinetic_list);
 	}
 }
 
@@ -144,7 +144,7 @@ static inline void kinetic_list_splice_tail_init(struct kinetic_list_head *kinet
 {
 	if (!kinetic_list_empty(kinetic_list)) {
 		__kinetic_list_splice(kinetic_list, head->n.prev, &head->n);
-		INIT_KINETIC_LIST_HEAD(kinetic_list);
+		init_kinetic_list_head(kinetic_list);
 	}
 }
 

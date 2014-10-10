@@ -1,8 +1,17 @@
-Installation
+Building
 The kinetic store introduced into Sheepdog  uses Kinetic C API library which is required to build Kinetic Sheepdog.
-Follow the Sheepdog installation to install Kinetic Sheepdog. 
+The library build is integrated into the sheepdog build. For building the sheepdog and kinetic-c library executes the
+following sequence:
+cd {sheepdog directory}
+./autogen.sh
+./configure
+make
 
 Kinetic C API library supporting sheepdog can be found under ./klib directory.
+
+
+Installation
+Follow the Sheepdog installation to install Kinetic Sheepdog. 
 
 
 Deployment

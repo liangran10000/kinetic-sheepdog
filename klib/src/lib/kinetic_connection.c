@@ -22,6 +22,7 @@
 #include "kinetic_types_internal.h"
 #include "kinetic_socket.h"
 #include "kinetic_logger.h"
+#include "kinetic_list.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -43,7 +44,7 @@ KineticSessionHandle KineticConnection_NewConnection(
             Connections[idx] = connection;
             KINETIC_CONNECTION_INIT(connection);
             connection->session = *config;
-			INIT_LIST_HEAD(&connection->pdus);
+			init_kinetic_list_head(&connection->pdus);
             handle = (KineticSessionHandle)(idx + 1);
             break;
         }
