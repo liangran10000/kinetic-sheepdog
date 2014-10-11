@@ -16,10 +16,10 @@
 #include <kinetic_client.h>
 #include <string.h>
 /* KINETIC KEY STORE Design */
-#define CONFIG_OID 					"KINETIC_CONFIG"
-#define EPOCH_OID_PREFIX 			"EPOCH:" 
-#define STALE_OID_PREFIX 			"STALE:"
-#define OBJECT_OID_PREFIX 			"OBJECT:"
+#define INVALID_OID					0x0000000000000000
+#define STALE_OID_PREFIX			0x1
+#define OBJECT_OID_PREFIX 			0x2
+#define EPOCH_OID_PREFIX			0x1
 #define DB_VERSION 					"0.0"
 #define KINETIC_TAG 				"KINETIC:SHEEPDOG"
 #define KINETIC_HMAC				"asdfasdf"
@@ -31,6 +31,18 @@
 #define KINETIC_TAG_SIZE 			(16)
 #define KINETIC_OBJECT_LIMIT		(0x100000)
 
+uint8_t epoch_oid_prefix[] = {0,0,0,0,0,0,0,0,1};
+uint8_t config_oid[] = {0,0,0,0,0,0,0,0,2,0,0,0,0};
+
+
+uint8_t obj_start[] = {OBJECT_OID_PREFIX,0,0,0,0,0,0,0,0,0,0,0,0};
+uint8_t obj_end[] = {OBJECT_OID_PREFIX,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF};
+
+uint8_t stale_start[] = {STALE_OID_PREFIX,0,0,0,0,0,0,0,0,0,0,0,0};
+uint8_t stale_end[] = {STALE_OID_PREFIX,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF};
+
+uint8_t epoch_start[] = {0,0,0,0,0,0,0,0,0,0,0,0,EPOCH_OID_PREFIX,0,0,0,0};
+uint8_t epoch_end[] = {0,0,0,0,0,0,0,0,0,0,0,0,EPOCH_OID_PREFIX,0xF,0xF,0xF,0xF};
 struct kinetic_tag {
 #define SHA1_PRESENT 	0x001
 #define STALE_OBJECT	0x002
@@ -39,10 +51,11 @@ struct kinetic_tag {
 		uint64_t	size;			/* size of the object */
 		uint64_t 	sha1;			/* SHA1 computed by the sheepdog */
 		uint32_t	seg_size;
+		uint64_t	linked_oid;
 };
 
 struct kinetic_req {
-        //KineticOperation op;
+		struct	list_node	list;
         KineticEntry metaData;
         uint8_t oid[PATH_MAX];
 		struct kinetic_tag tag;
@@ -66,6 +79,7 @@ struct kinetic_drive {
 	char			config_path[PATH_MAX];
 	struct list_node	list;
 	char			hmacBuf[PATH_MAX];
+	struct list_head	req_list;
 	};
 
 
@@ -92,29 +106,35 @@ static void make_kinetic_req(struct kinetic_drive *drv, struct kinetic_req *req,
 
 int kinetic_write_config(const char *buf, size_t len, bool force_create);
 
+
+static uint32_t object2epoch(uint8_t *buf)
+{
+	buf += sizeof(epoch_oid_prefix);
+    return (*(uint32_t *)buf);		
+}
 static void epoch2object(struct kinetic_req *req, uint32_t epoch)
 {
-	snprintf((char *)(req->oid), sizeof(req->oid), "%s%"PRIx32, EPOCH_OID_PREFIX,
-		epoch);
+	memcpy(req->oid, epoch_oid_prefix, sizeof(epoch_oid_prefix));
+	memcpy(&req->oid[sizeof(epoch_oid_prefix)], &epoch, sizeof(epoch));
 }
 
 
 static void stale_oid2object(struct kinetic_req *req, uint64_t oid, uint32_t epoch)
 {
-	snprintf((char *)(req->oid), sizeof(req->oid), "%s:%"PRIx32":%"PRIx64, STALE_OID_PREFIX,
-		epoch, oid);
+	epoch2object(req, epoch);
+	req->tag.linked_oid = oid;
 }
 
-static void oid2object(struct kinetic_req *req, uint64_t oid, uint32_t seg, const char *prefix)
+static void oid2object(struct kinetic_req *req, uint64_t oid, uint32_t seg)
 {
-	snprintf((char *)(req->oid), sizeof(req->oid), "%s%" PRIx64 "%" PRIx32,
-			prefix, oid, seg);
+	req->oid[0] = OBJECT_OID_PREFIX;
+	memcpy(&req->oid[1], &oid, sizeof(oid));
+	memcpy(&req->oid[(sizeof(oid)+1)], &seg, sizeof(seg));
 }
-
 
 static void config2oid(struct kinetic_req *req)
 {
-	snprintf((char *)&(req->oid), sizeof(req->oid), "%s", CONFIG_OID);
+	memcpy(req->oid, config_oid, sizeof(config_oid));
 }
 
 static  kinetic_req_t *alloc_req(void)
@@ -142,7 +162,7 @@ static KineticStatus kinetic_put(struct kinetic_drive *drv,
 	req->tag.size = len;
 	req->tag.segs = segs;
 	for (i = 0; i < segs; i ++) {
-		oid2object(req, oid, i, OBJECT_OID_PREFIX);
+		oid2object(req, oid, i);
 		req->tag.seg_size =  MIN(len, KINETIC_OBJECT_LIMIT);
 		make_kinetic_req(drv, req, req->tag.seg_size, buf);
 		if ((status = KineticClient_Put(drv->handle, &(req->metaData)))
@@ -164,7 +184,7 @@ static int kinetic_get(struct kinetic_drive *drv,
 	uint32_t i = 0, segs = 0, read_size = 0, req_len;
 	assert(offset == 0);
 	req_len = MIN(len, KINETIC_OBJECT_LIMIT);
-	oid2object(req, oid, i++, OBJECT_OID_PREFIX);
+	oid2object(req, oid, i++);
 	make_kinetic_req(drv, req, req_len,  buf);
 	if (len == 0)
 		req->metaData.metadataOnly = true;
@@ -180,7 +200,7 @@ static int kinetic_get(struct kinetic_drive *drv,
 		req_len = MIN((len - read_size), KINETIC_OBJECT_LIMIT);
 		buf += req_len;
 		assert(i <= segs);
-		oid2object(req, oid, i++, OBJECT_OID_PREFIX);
+		oid2object(req, oid, i++);
 		make_kinetic_req(drv, req, req_len,  buf);
 		status = KineticClient_Get(drv->handle, &(req->metaData));
 		if ( (status != KINETIC_STATUS_SUCCESS) &&
@@ -198,7 +218,7 @@ static KineticStatus kinetic_delete(struct kinetic_drive *drv,
 {  
 	KineticStatus status;
 	uint32_t i, segs;
-	oid2object(req, oid, 0, OBJECT_OID_PREFIX);
+	oid2object(req, oid, 0);
 	make_kinetic_req(drv, req, 0, NULL);
    	req->metaData.metadataOnly = true;
 	if ((status = KineticClient_Get(drv->handle, &(req->metaData)))
@@ -209,7 +229,7 @@ static KineticStatus kinetic_delete(struct kinetic_drive *drv,
     segs = req->tag.segs;
 	assert(segs);
 	for (i = 0; i < segs; i++) {
-		oid2object(req, oid, i, OBJECT_OID_PREFIX);
+		oid2object(req, oid, i);
 		make_kinetic_req(drv, req,   0, NULL);
 		if ((status = KineticClient_Delete(drv->handle, &(req->metaData)))
 		 	!= KINETIC_STATUS_SUCCESS){
@@ -269,13 +289,10 @@ int kinetic_get_store_path(uint64_t oid, uint8_t ec_index, char *path)
 {
 		/* FIXME we need to return drive IP Address*/
 
-	struct kinetic_req *req = alloc_req();
 	struct kinetic_drive *drv = oid2drv(oid);
-	oid2object(req, oid, 0, OBJECT_OID_PREFIX);
 	if (drv)
-			return snprintf(path, PATH_MAX, "%s:%s", drv->base_path, req->oid);
+			return snprintf(path, PATH_MAX, "%s", drv->base_path);
 	*path = '\0';
-	free_req(req);
 	return 0;
 	/*
 		if (is_erasure_oid(oid)) {
@@ -309,7 +326,7 @@ bool kinetic_exist(uint64_t oid, uint8_t ec_index)
 	bool ret;
 	/*FIXME replace with proper error code */
 	assert(req != NULL);
-	oid2object(req, oid, 0, OBJECT_OID_PREFIX);
+	oid2object(req, oid, 0);
 	make_kinetic_req(drv, req, 0, NULL);
 	req->metaData.force = false;
    	req->metaData.metadataOnly = true;
@@ -585,7 +602,7 @@ size_t kinetic_get_store_objsize(uint64_t oid)
 		return SD_DATA_OBJ_SIZE / d;
 	}
  
-	oid2object(req, oid, 0, OBJECT_OID_PREFIX);
+	oid2object(req, oid, 0);
 	make_kinetic_req(drv, req,  0, NULL);
 	req->metaData.metadataOnly = true;
 	status = KineticClient_Get(drv->handle, &(req->metaData));
@@ -811,7 +828,7 @@ int kinetic_get_hash(uint64_t oid, uint32_t epoch, uint8_t *sha1)
 	uint8_t *buf;
 	bool is_readonly_obj = oid_is_readonly(oid);
 
-	oid2object(req, oid, 0, OBJECT_OID_PREFIX);
+	oid2object(req, oid, 0);
 	make_kinetic_req(drv, req,  0, NULL);
    	req->metaData.metadataOnly = true;
 	status = KineticClient_Get(drv->handle, &(req->metaData));
@@ -1019,63 +1036,78 @@ int kinetic_update_epoch_log(uint32_t epoch, struct sd_node *nodes, size_t nr_no
 int kinetic_do_epoch_log_read(uint32_t epoch, struct sd_node *nodes, int len,
 			     int *nr_nodes, time_t *timestamp)
 {
-	int   buf_len;
+	int   buf_len, ret;
 	struct kinetic_req *req = alloc_req();
 	struct kinetic_drive *drv = NULL;
 	KineticStatus status;
 	buf_len = len + sizeof(*timestamp);
 	char *buf = malloc(buf_len);
-	if (req == NULL || buf == NULL) {
-			sd_err("no more memory");
-			if (req) free_req(req);
-			if (buf) free(buf);
-			return SD_RES_NO_MEM;
+	if (req == NULL || buf == NULL || drv == NULL) {
+			sd_err("no more memory or no drive");
+			ret = SD_RES_NO_MEM;
+			goto log_read_exit;
 	}
-	memset(req, 0x00, sizeof(*req));
 	epoch2object(req, epoch);
 	make_kinetic_req(drv, req,  len, (uint8_t *)buf);
 	if ((status = KineticClient_Get(drv->handle, &(req->metaData)))
 		 != KINETIC_STATUS_SUCCESS){
 		sd_err("failed to write epoch  path=%s ", req->oid);
+		ret = SD_RES_NO_TAG;
+		goto log_read_exit;
 	}
 
-	/* FIXME we should first check actual length of the key
- 	* instead of the user supplied length
- 	*/
+	if (req->tag.size !=  buf_len) {
+		sd_err("epoch %d length mismatch expected:%d found:%" PRIu64, epoch, buf_len,
+		 	req->tag.size);
+		if (req->tag.size > buf_len)
+				ret = SD_RES_BUFFER_SMALL;
+		else
+				ret = SD_RES_NO_TAG;
+		goto log_read_exit;
+	}
  	memcpy(nodes, buf, len);	
 	*nr_nodes = len / sizeof(struct sd_node);
 	if (timestamp)
 		memcpy(timestamp, buf + len, sizeof(*timestamp));
-	free_req(req);
-	free(buf);	
-	return SD_RES_SUCCESS;
+	ret = SD_RES_SUCCESS;
+log_read_exit:
+	if (req) free_req(req);
+	if (buf) free(buf);	
+	return ret;
 }
 
 uint32_t kinetic_get_latest_epoch(void)
 {
-#define EPOCH_START 0x00000000
-#define EPOCH_END	0xFFFFFFFF
+	KineticRange range;
+	ByteBuffer	 key;
+	uint8_t		buf[sizeof(epoch_end)];
 	/* FIXME complete when key rannge API is supported */
 	struct kinetic_req *req = alloc_req();
 	struct kinetic_drive *drv =  addr2drv(NULL);
-	uint32_t epoch = 0;
-	KineticStatus status = KINETIC_STATUS_SUCCESS;
-	memset(req, 0x00, sizeof(*req));
+	KineticStatus status;
 	if (req == NULL) {
 			sd_err("no more memory");
 			return -1;
 	}
-	epoch2object(req, EPOCH_START);
-	make_kinetic_req(drv, req,  0, NULL);
-	//status = KineticClient_(&(req.op), &(req.metaData));
-	req->metaData.metadataOnly = true;
-	if (unlikely(status != KINETIC_STATUS_SUCCESS)) {
-		sd_err("failed to read epoch ");
-		free_req(req);
-		return -1;                                                                                              
+	memset(&range, 0x00, sizeof(range));
+	key.array.len = sizeof(buf);
+ 	key.array.data = buf;
+	range.startKey.array.data = epoch_start;
+	range.startKey.array.len = sizeof(epoch_start);
+	range.endKey.array.data = epoch_end;
+	range.endKey.array.len = sizeof(epoch_end);
+	range.startKeyInclusive = true;
+	range.endKeyInclusive = true;
+	range.reverse = true;
+	range.maxRequested = 1;
+	range.keys = &key;
+	free(req);
+	status = KineticClient_GetRange(drv->handle, &range);
+	if (status == KINETIC_STATUS_SUCCESS) {
+			return object2epoch(buf);
 	}
-  	free(req);
-	return epoch;
+	return -1;
+
 }
 
 int kinetic_lock_base_dir(const char *d)
