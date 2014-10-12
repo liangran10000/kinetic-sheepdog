@@ -30,19 +30,17 @@
 #define KINETIC_SD_CONFIG_SIZE 		(40)
 #define KINETIC_TAG_SIZE 			(16)
 #define KINETIC_OBJECT_LIMIT		(0x100000)
+#define	KINETIC_OBJECT_NAME_LENGTH	13
+uint8_t epoch_oid_prefix[]	= {0,0,0,0,0,0,0,0,1};
+uint8_t config_oid[]		= {0,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,0};
+uint8_t obj_start[]			= {OBJECT_OID_PREFIX,0,0,0,0,0,0,0,0,0,0,0,0};
+uint8_t obj_end[]			= {OBJECT_OID_PREFIX,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF};
 
-uint8_t epoch_oid_prefix[] = {0,0,0,0,0,0,0,0,1};
-uint8_t config_oid[] = {0,0,0,0,0,0,0,0,2,0,0,0,0};
+uint8_t stale_start[]  		= {STALE_OID_PREFIX,0,0,0,0,0,0,0,0,0,0,0,0};
+uint8_t stale_end[] 		= {STALE_OID_PREFIX,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF};
 
-
-uint8_t obj_start[] = {OBJECT_OID_PREFIX,0,0,0,0,0,0,0,0,0,0,0,0};
-uint8_t obj_end[] = {OBJECT_OID_PREFIX,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF};
-
-uint8_t stale_start[] = {STALE_OID_PREFIX,0,0,0,0,0,0,0,0,0,0,0,0};
-uint8_t stale_end[] = {STALE_OID_PREFIX,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF,0xF};
-
-uint8_t epoch_start[] = {0,0,0,0,0,0,0,0,0,0,0,0,EPOCH_OID_PREFIX,0,0,0,0};
-uint8_t epoch_end[] = {0,0,0,0,0,0,0,0,0,0,0,0,EPOCH_OID_PREFIX,0xF,0xF,0xF,0xF};
+uint8_t epoch_start[] = {EPOCH_OID_PREFIX,0,0,0,0};
+uint8_t epoch_end[] = {EPOCH_OID_PREFIX,0xF,0xF,0xF,0xF};
 struct kinetic_tag {
 #define SHA1_PRESENT 	0x001
 #define STALE_OBJECT	0x002
@@ -57,7 +55,7 @@ struct kinetic_tag {
 struct kinetic_req {
 		struct	list_node	list;
         KineticEntry metaData;
-        uint8_t oid[PATH_MAX];
+        uint8_t oid[KINETIC_OBJECT_NAME_LENGTH];
 		struct kinetic_tag tag;
 };
 
@@ -392,7 +390,7 @@ static void make_kinetic_req(struct kinetic_drive *drv, struct kinetic_req *req,
    	req->metaData.tag.array.data  = (unsigned char *)&req->tag;
    	//req->metaData.tag = BYTE_ARRAY_INIT_FROM_CSTRING(KINETIC_TAG);
    	req->metaData.metadataOnly = false;
-	req->metaData.key.array.len = (size_t )strlen((char *)req->oid);
+	req->metaData.key.array.len = sizeof(req->oid);
 	req->metaData.key.array.data = req->oid;
 	req->metaData.value.array.data = buf;
 	req->metaData.value.array.len = len; 
@@ -1087,7 +1085,7 @@ uint32_t kinetic_get_latest_epoch(void)
 	KineticStatus status;
 	if (req == NULL) {
 			sd_err("no more memory");
-			return -1;
+			return 0;
 	}
 	memset(&range, 0x00, sizeof(range));
 	key.array.len = sizeof(buf);
@@ -1103,10 +1101,9 @@ uint32_t kinetic_get_latest_epoch(void)
 	range.keys = &key;
 	free(req);
 	status = KineticClient_GetRange(drv->handle, &range);
-	if (status == KINETIC_STATUS_SUCCESS) {
-			return object2epoch(buf);
-	}
-	return -1;
+	if (status == KINETIC_STATUS_SUCCESS && range.returned)
+				return object2epoch(buf);
+	return 0;
 
 }
 
