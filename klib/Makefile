@@ -38,7 +38,7 @@ KINETIC_LIB_OTHER_DEPS = Makefile Rakefile $(VERSION_FILE)
 
 default: $(KINETIC_LIB)
 
-all: clean  default
+all:  default
 
 ci: uninstall all install
 	@echo
@@ -57,7 +57,7 @@ test: Rakefile $(LIB_OBJS)
 	bundle exec rake ci
 
 clean:
-	rm -rf $(BIN_DIR)/* $(OUT_DIR)/*.o *.core
+	rm -rf $(BIN_DIR)/*.a $(OUT_DIR)/*.o *.core
 
 .PHONY: clean
 
