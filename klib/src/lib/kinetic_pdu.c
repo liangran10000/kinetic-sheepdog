@@ -230,17 +230,19 @@ KineticProto_KeyValue* KineticPDU_GetKeyValue(KineticPDU* pdu)
 KineticStatus KineticPDU_GetKeyRange(KineticPDU* pdu, KineticRange *range)
 {
 		ByteBuffer *dest = range->keys;
-		if (pdu && pdu->proto && pdu->proto->command && pdu->proto->command->body &&
-				pdu->proto->command->body->range) {
-				int available  = (int)pdu->proto->command->body->range->n_key;
-    			ProtobufCBinaryData* src =  pdu->proto->command->body->range->key;
-				for (range->returned = 0;
-					range->returned < range->maxRequested && range->returned < available;  src++, dest++) {
-					if (dest->array.len < src->len) return KINETIC_STATUS_BUFFER_OVERRUN;
-					dest->bytesUsed = src->len;
-					memcpy(dest->array.data, src->data, src->len);
-					range->returned++;
+		if (pdu && pdu->proto && pdu->proto->command) {
+				if (pdu->proto->command->body && pdu->proto->command->body->range) {
+					int available  = (int)pdu->proto->command->body->range->n_key;
+					ProtobufCBinaryData* src =  pdu->proto->command->body->range->key;
+					for (range->returned = 0;
+						range->returned < range->maxRequested && range->returned < available;  src++, dest++) {
+						if (dest->array.len < src->len) return KINETIC_STATUS_BUFFER_OVERRUN;
+						dest->bytesUsed = src->len;
+						memcpy(dest->array.data, src->data, src->len);
+						range->returned++;
+					}
 				}
+				else range->returned = 0;
 				return KINETIC_STATUS_SUCCESS;
 		}
 		return KINETIC_STATUS_INTERNAL_ERROR;
