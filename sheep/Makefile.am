@@ -27,7 +27,7 @@ sbin_PROGRAMS		= sheep
 sheep_SOURCES		= sheep.c group.c request.c gateway.c store.c vdi.c \
 			  journal.c ops.c recovery.c cluster/local.c \
 			  object_cache.c object_list_cache.c kinetic_store.c \
-			  plain_store.c config.c migrate.c md.c
+			  kinetic_heartbeat.c plain_store.c config.c migrate.c md.c
 
 if BUILD_HTTP
 sheep_SOURCES		+= http/http.c http/kv.c http/s3.c http/swift.c \
