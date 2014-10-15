@@ -1303,12 +1303,30 @@ void  *kinetic_update_node(struct sd_node *node, void *ref)
 	return NULL;
 }
 
-/*===================== STORING Large Objects ====================
- *Object in sheepdog may be over 1MB limit iposed by Kinetic. Additional keys are generated as follows:
- * First Key for a Large Object: Derived form OID such as "OBJ":{OID}
- * Subsequent Keys: "SEG":{OID}:{SEG ID}
- * The first segment is zero and is the main key
- * Subsequent segmenst are numbered as 1,2,3...n
- * Tag filed in the ,etadata is used to store additional information
- */
+int send_kinetic_req(const struct node_id *node, struct sd_req *hdr, void *data,  uint32_t epoch, uint32_t retries)
+{
+		// find the drive id */
+	kinetic_drive_t *drv = addr2drv((const char *)node->kinetic_addr);
+	struct kinetic_req *req = alloc_req();
+	int ret;
+	switch(hdr->opcode) {
+			case SD_OP_WRITE_PEER:
+			case SD_OP_CREATE_AND_WRITE_PEER:
+				assert(hdr->obj.offset == 0);
+				ret =  kinetic_put(drv, req, hdr->obj.oid, hdr->data_length, data);
+				break;
+			case SD_OP_REMOVE_PEER:
+				assert(hdr->obj.offset == 0);
+				ret =  kinetic_delete(drv, req, hdr->obj.oid);
+				break;
+			case SD_OP_READ_PEER:
+				assert(hdr->obj.offset == 0);
+				ret =  kinetic_get(drv, req, hdr->obj.oid, hdr->data_length, data, hdr->obj.offset);
+				break;
+			default:
+				assert(false);
+	}
+	free(req);
+	return 0;
+}
 

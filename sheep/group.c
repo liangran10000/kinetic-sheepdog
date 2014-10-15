@@ -991,12 +991,17 @@ static int send_join_request(void)
 	void *ref = NULL;
 	sd_info("%s going to join the cluster", node_to_str(n));
 	if (sys->store  & STORE_FLAG_KINETIC) {
-		struct sd_node *node = malloc(sizeof(*node));
-		assert(node);
-		memcpy(node, n , sizeof(*node));
-		while((ref = kinetic_update_node(&node, ref)) != NULL) {
-			ret = sys->cdrv->join(node, &sys->cinfo, sizeof(sys->cinfo));
-			if (ret != SD_RES_SUCCESS) break;
+		for (;;) {
+			struct sd_node *node = malloc(sizeof(*node));
+			assert(node);
+			memcpy(node, n , sizeof(*node));
+			ref = kinetic_update_node(node, ref);
+			if (ref) {
+				ret = sys->cdrv->join(node, &sys->cinfo, sizeof(sys->cinfo));
+				if (ret == SD_RES_SUCCESS) continue;
+			}
+			free(node);
+			break;
 		}
 	}
 	else

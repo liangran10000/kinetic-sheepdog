@@ -525,9 +525,13 @@ static int gateway_forward_request(struct request *req)
 		hdr.obj.offset = reqs[i].off;
 		hdr.obj.ec_index = i;
 		hdr.obj.copy_policy = req->rq.obj.copy_policy;
-		ret = send_req(sfd->fd, &hdr, reqs[i].buf, wlen,
-			       sheep_need_retry, req->rq.epoch,
-			       MAX_RETRY_COUNT);
+		/* FIXME should be req specific not the shole gateway */
+		if ( (sys->store & STORE_FLAG_KINETIC))
+			ret = send_kinetic_req(nid, &hdr, reqs[i].buf, wlen,
+					req->rq.epoch, MAX_RETRY_COUNT);
+		else
+			ret = send_req(sfd->fd, &hdr, reqs[i].buf, wlen,
+			       sheep_need_retry, req->rq.epoch, MAX_RETRY_COUNT);
 		if (ret) {
 			sockfd_cache_del_node(nid);
 			err_ret = SD_RES_NETWORK_ERROR;
