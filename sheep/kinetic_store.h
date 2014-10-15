@@ -32,4 +32,5 @@ uint64_t kinetic_init_path_space(const char *path, bool purge);
 int kinetic_remove_epoch(uint32_t epoch);
 uint64_t kinetic_init_path_space(const char *path, bool purge);
 int kinetic_init_global_pathnames(const char *d, char *argp);
+void  *kinetic_update_node(struct sd_node *node, void *ref);
 #endif

@@ -158,10 +158,12 @@ enum sd_node_status {
 
 struct node_id {
 	uint8_t addr[16];
-	uint16_t port;
 	uint8_t io_addr[16];
+	uint8_t	kinetic_addr[16];
+	uint16_t port;
 	uint16_t io_port;
-	uint8_t pad[4];
+	uint16_t kinetic_port;
+	uint8_t padding[2];
 };
 
 struct disk_info {
@@ -179,12 +181,12 @@ struct sd_node {
 	uint32_t	zone;
 	uint64_t        space;
 #ifdef HAVE_DISKVNODES
-	#define SD_MAX_NODES 830
-	#define SD_NODE_SIZE (80 + sizeof(struct disk_info) * DISK_MAX)
+	#define SD_MAX_NODES 830 /* FIXME for SD_NODE_SIZE 96 */
+	#define SD_NODE_SIZE (96 + sizeof(struct disk_info) * DISK_MAX)
 	struct disk_info disks[DISK_MAX];
 #else
-	#define SD_MAX_NODES 6144
-	#define SD_NODE_SIZE 80
+	#define SD_MAX_NODES 5120 /* based upon SD_NODE_SIZE of 96 */
+	#define SD_NODE_SIZE 96
 	struct disk_info disks[0];
 #endif
 };

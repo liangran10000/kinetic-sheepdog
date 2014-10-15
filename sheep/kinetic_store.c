@@ -75,8 +75,9 @@ struct kinetic_drive {
 	char			obj_path[PATH_MAX];
 	char			stale_path[PATH_MAX];
 	char			config_path[PATH_MAX];
-	struct list_node	list;
 	char			hmacBuf[PATH_MAX];
+	uint32_t		zone;
+	struct list_node	list;
 	struct list_head	req_list;
 	};
 
@@ -1284,6 +1285,22 @@ int kinetic_init_global_pathnames(const char *d, char *argp)
 		return -1;
 	}
 	return 0;
+}
+
+void  *kinetic_update_node(struct sd_node *node, void *ref)
+{
+	kinetic_drive_t *drv;
+	list_for_each_entry(drv, &drives, list) {
+		if ( (ref == NULL && drv) || (drv == ref)){
+			node->space = drv->capacity;
+			node->zone   = drv->zone;
+			memcpy(node->nid.kinetic_addr, drv->conn.host,
+					sizeof(node->nid.kinetic_addr));
+			node->nid.port = drv->conn.port;
+
+		}
+	}
+	return NULL;
 }
 
 /*===================== STORING Large Objects ====================

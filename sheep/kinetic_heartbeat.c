@@ -49,7 +49,6 @@ static char  *get_tag_value(char *buf, const char *tag, char *val, int val_len)
 		return start;
 	}
 	return NULL;
-
 }
 static bool uuid_matched(char *buf, uuid_entry_t *entry)
 {

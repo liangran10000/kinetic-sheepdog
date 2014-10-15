@@ -987,9 +987,21 @@ main_fn bool sd_join_handler(const struct sd_node *joining,
 static int send_join_request(void)
 {
 	struct sd_node *n = &sys->this_node;
-
+	int ret;
+	void *ref = NULL;
 	sd_info("%s going to join the cluster", node_to_str(n));
-	return sys->cdrv->join(n, &sys->cinfo, sizeof(sys->cinfo));
+	if (sys->store  & STORE_FLAG_KINETIC) {
+		struct sd_node *node = malloc(sizeof(*node));
+		assert(node);
+		memcpy(node, n , sizeof(*node));
+		while((ref = kinetic_update_node(&node, ref)) != NULL) {
+			ret = sys->cdrv->join(node, &sys->cinfo, sizeof(sys->cinfo));
+			if (ret != SD_RES_SUCCESS) break;
+		}
+	}
+	else
+		ret = sys->cdrv->join(n, &sys->cinfo, sizeof(sys->cinfo));
+	return ret;
 }
 
 static void requeue_cluster_request(void)
