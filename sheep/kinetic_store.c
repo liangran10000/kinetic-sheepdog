@@ -79,6 +79,7 @@ struct kinetic_drive {
 	uint32_t		zone;
 	struct list_node	list;
 	struct list_head	req_list;
+	uint32_t			index;
 	};
 
 
@@ -1129,6 +1130,7 @@ int kinetic_check_path_len(const char *path)
 }
 static bool kinetic_add_disk(char *path, bool flag)
 {
+	static uint32_t disk_index = 0;
 	char *host, *port, *ptrs, buf[PATH_MAX];
 
 	struct kinetic_drive *drv = malloc(sizeof(*drv));
@@ -1153,6 +1155,7 @@ static bool kinetic_add_disk(char *path, bool flag)
 	}
 	strncpy(drv->conn.host, host, sizeof(drv->conn.host));
 	strncpy(drv->base_path, path, sizeof(drv->base_path));
+	drv->index = disk_index++;
 	drv->conn.port = atoi(port);
 	drv->conn.nonBlocking = false;
 	drv->conn.clusterVersion = KINETIC_CLUSTER_VERSION;
@@ -1188,8 +1191,6 @@ int kinetic_init_obj_path(char *drive)
 {
 	char *p;
 	char buf[PATH_MAX];
-
-KineticStatus KineticClient_Init(const char *logFile, int logLevel);
 	if (kinetic_check_path_len(drive) < 0)
 		return -1;
     strncpy(buf, drive, sizeof(buf));
@@ -1287,20 +1288,21 @@ int kinetic_init_global_pathnames(const char *d, char *argp)
 	return 0;
 }
 
-void  *kinetic_update_node(struct sd_node *node, void *ref)
+uint32_t kinetic_update_node(struct sd_node *node, uint32_t index)
 {
 	kinetic_drive_t *drv;
 	list_for_each_entry(drv, &drives, list) {
-		if ( (ref == NULL && drv) || (drv == ref)){
+		if (index == drv->index) {
 			node->space = drv->capacity;
 			node->zone   = drv->zone;
 			memcpy(node->nid.kinetic_addr, drv->conn.host,
-					sizeof(node->nid.kinetic_addr));
+				sizeof(node->nid.kinetic_addr));
 			node->nid.port = drv->conn.port;
-
+			return ++index;
 		}
+
 	}
-	return NULL;
+	return 0;
 }
 
 int send_kinetic_req(const struct node_id *node, struct sd_req *hdr, void *data,  uint32_t epoch, uint32_t retries)
