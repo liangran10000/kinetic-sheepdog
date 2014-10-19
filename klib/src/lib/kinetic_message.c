@@ -17,9 +17,10 @@
 * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
 */
-
+#include <stdbool.h>
 #include "kinetic_message.h"
 #include "kinetic_logger.h"
+#include "kinetic_connection.h"
 
 void KineticMessage_HeaderInit(KineticProto_Header *header, KineticConnection *connection)
 {
@@ -30,7 +31,7 @@ void KineticMessage_HeaderInit(KineticProto_Header *header, KineticConnection *c
 		header->clusterVersion = connection->session.clusterVersion;
 		header->identity = connection->session.identity;
 		header->connectionID = connection->connectionID;
-		header->sequence = connection->sequence;
+		header->sequence = KineticConnection_GetNextSequence(connection);
 }
 
 void KineticMessage_Init(KineticMessage* const msg,

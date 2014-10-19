@@ -20,17 +20,12 @@
 
 #ifndef _KINETIC_ALLOCATOR_H
 #define _KINETIC_ALLOCATOR_H
-#include "kinetic_types_internal.h"
 #include "kinetic_list.h"
-typedef struct _KineticPDUItem {
-		struct kinetic_list_node		kinetic_list;
-		KineticPDU				PDU;
-}KineticPDUItem;
+#include "kinetic_types_internal.h"
 
-KineticPDU* KineticAllocator_NewPDU(KineticConnection* const connection);
-void KineticAllocator_FreePDU(KineticPDU* pdu, KineticConnection* const connection);
-void KineticAllocator_FreeAllPDUs(KineticConnection* const connection);
+KineticOperation* KineticAllocator_NewOperation(KineticConnection* const connection);
+void KineticAllocator_FreeOperation(KineticOperation* op, KineticConnection* const connection);
+void KineticAllocator_FreeAllOperations(KineticConnection* const connection);
 bool KineticAllocator_ValidateAllMemoryFreed(KineticConnection* const connection);
-void KineticAllocator_FreeAllPDUs(KineticConnection *connection);
 
 #endif // _KINETIC_ALLOCATOR

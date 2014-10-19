@@ -1,8 +1,20 @@
-#ifndef __KINETIC_LIST_H__
+# ifndef __KINETIC_LIST_H__
 #define __KINETIC_LIST_H__
 
 
 #include <stdbool.h>
+#include <stddef.h>
+#ifndef offsetof
+#define offsetof(TYPE, ELT) ((size_t) &((TYPE *)0)->ELT)
+#endif
+#define __LOCAL(var, line) __ ## var ## line
+#define _LOCAL(var, line) __LOCAL(var, line)
+#define LOCAL(var) _LOCAL(var, __LINE__)
+#define typeof __typeof__
+
+#define container_of(ptr, type, member) ({          \
+    const typeof(((type *)0)->member) *__mptr = (ptr);  \
+	    (type *)((char *)__mptr - offsetof(type, member)); })
 
 struct kinetic_list_node {
 	struct kinetic_list_node *next;
@@ -21,6 +33,8 @@ struct kinetic_list_head {
 #define KINETIC_LIST_NODE(name) \
 	struct kinetic_list_node name = KINETIC_LIST_NODE_INIT
 
+
+
 inline void init_kinetic_list_head(struct kinetic_list_head *kinetic_list)
 {
 	kinetic_list->n.next = &kinetic_list->n;
@@ -32,6 +46,9 @@ inline void INIT_KINETIC_LIST_NODE(struct kinetic_list_node *kinetic_list)
 	kinetic_list->next = NULL;
 	kinetic_list->prev = NULL;
 }
+
+#define kinetic_list_entry(ptr, type, member) \
+	container_of(ptr, type, member)
 
 #define kinetic_list_first_entry(head, type, member) \
 	kinetic_list_entry((head)->n.next, type, member)
@@ -46,8 +63,7 @@ static inline bool kinetic_list_linked(const struct kinetic_list_node *node)
 	return node->next != NULL;
 }
 
-#define kinetic_list_entry(ptr, type, member) \
-	container_of(ptr, type, member)
+
 
 #define kinetic_list_for_each(pos, head)					\
 	for (typeof(pos) LOCAL(n) = (pos = (head)->n.next, pos->next);	\

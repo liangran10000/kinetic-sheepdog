@@ -18,51 +18,62 @@
 *
 */
 
+#include <stdlib.h>
 #include "kinetic_allocator.h"
 #include "kinetic_logger.h"
-#include <stdlib.h>
 #include "kinetic_connection.h"
-STATIC KINETIC_LIST_HEAD (PDUList); //= {.start = NULL, .last = NULL};
-#define PDU2LIST(pdu) ( ((uint8_t *)(pdu)) - sizeof( struct kinetic_list_node))
 
-KineticPDU* KineticAllocator_NewPDU(KineticConnection *connection)
+KineticOperation* KineticAllocator_NewOperation(KineticConnection *connection)
 {
-   KineticPDUItem * item = malloc(sizeof(KineticPDUItem));
-   assert(item);
-   item->PDU.proto = NULL;
+	KineticOperation *op;
 	KineticConnection_Lock(connection);
-   kinetic_list_add(&item->kinetic_list, &PDUList);
-   KineticConnection_Unlock(connection);
-   return &item->PDU;
-
-}
-
-void KineticAllocator_FreePDU(KineticPDU* pdu, KineticConnection *connection)
-{
-	assert(pdu);
-    if ((pdu->proto != NULL) && pdu->protobufDynamicallyExtracted) {
-        LOG("Freeing dynamically allocated protobuf");
-        KineticProto__free_unpacked(pdu->proto, NULL);
-    };
-	KineticPDUItem *item = (KineticPDUItem *)PDU2LIST(pdu);
-	KineticConnection_Lock(connection);
-	kinetic_list_del( &item->kinetic_list);
+	if (!kinetic_list_empty(&connection->free_op_list)) {
+		op = (KineticOperation *)(connection->free_op_list.n.next);
+		kinetic_list_del(&op->list);
+	}
+	else {
+		op = malloc(sizeof(*op));
+		pthread_cond_init(&op->callback_cond, NULL);
+		pthread_mutex_init(&op->callback_mutex, NULL);
+	}
+	assert(op);
+	op->response.proto = op->request.proto = NULL;
 	KineticConnection_Unlock(connection);
-	free(item);
+	return op;
+
+}
+static void Kinetic_FreeProto(KineticPDU *pdu)
+{
+	if ((pdu->proto != NULL) && pdu->protobufDynamicallyExtracted) {
+	        LOG("Freeing dynamically allocated protobuf");
+	        KineticProto__free_unpacked(pdu->proto, NULL);
+	    };
 }
 
-void KineticAllocator_FreeAllPDUs(KineticConnection *connection)
+void KineticAllocator_FreeOperation(KineticOperation* op, KineticConnection *connection)
 {
-	KineticPDUItem *item;
+	assert(op);
+    Kinetic_FreeProto(&op->request);
+    Kinetic_FreeProto(&op->response);
 	KineticConnection_Lock(connection);
-	while (!kinetic_list_empty(&connection->pdus)) {
-    	item = (KineticPDUItem *)(connection->pdus.n.next);
-	 	KineticPDU *pdu = &item->PDU; 
-        if ( pdu->proto != NULL && pdu->protobufDynamicallyExtracted) {
-               KineticProto__free_unpacked(pdu->proto, NULL);
-         }
-	  	kinetic_list_del(&item->kinetic_list);
-		free(item);
+	//kinetic_list_del( &op->list);
+	kinetic_list_add(&op->list, &connection->free_op_list);
+	KineticConnection_Unlock(connection);
+
+}
+
+void KineticAllocator_FreeAllOperations(KineticConnection *connection)
+{
+	KineticOperation *op;
+	KineticConnection_Lock(connection);
+	while (!kinetic_list_empty(&connection->free_op_list)) {
+		op = (KineticOperation *)(connection->free_op_list.n.next);
+		Kinetic_FreeProto(&op->request);
+		Kinetic_FreeProto(&op->response);
+	  	kinetic_list_del(&op->list);
+	  	pthread_mutex_destroy(&op->callback_mutex);
+	  	pthread_cond_destroy(&op->callback_cond);
+		free(op);
 	}
 	KineticConnection_Unlock(connection);
 }
@@ -71,7 +82,11 @@ bool KineticAllocator_ValidateAllMemoryFreed(KineticConnection *connection)
 {
 	bool rc;
 	KineticConnection_Lock(connection);
-    rc = kinetic_list_empty(&connection->pdus);
+    if (kinetic_list_empty(&connection->inprogress_op_list) &&
+    	kinetic_list_empty(&connection->free_op_list) &&
+    	kinetic_list_empty(&connection->pending_op_list))
+    	rc = true;
+    else rc = false;
 	KineticConnection_Unlock(connection);
 	return rc;
 }

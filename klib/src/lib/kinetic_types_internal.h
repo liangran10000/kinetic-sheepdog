@@ -20,18 +20,23 @@
 
 #ifndef _KINETIC_TYPES_INTERNAL_H
 #define _KINETIC_TYPES_INTERNAL_H
-#include "kinetic_types.h"
-#include "kinetic_proto.h"
 #include <netinet/in.h>
 #include <ifaddrs.h>
 #include <openssl/sha.h>
 #include <pthread.h>
 #include <time.h>
+#include <pthread.h>
+#include <sys/epoll.h>
+#include <sys/eventfd.h>
 #include "kinetic_list.h"
+#include "kinetic_types.h"
+#include "kinetic_proto.h"
 #define KINETIC_SESSIONS_MAX (6)
 #define KINETIC_PDUS_PER_SESSION_DEFAULT (2)
 #define KINETIC_PDUS_PER_SESSION_MAX (10)
 #define KINETIC_SOCKET_DESCRIPTOR_INVALID (-1)
+#define EPOLL_EVENT_MAX						(2)
+#define EPOLL_WAIT							(1000)
 
 // Ensure __func__ is defined (for debugging)
 #if !defined __func__
@@ -44,32 +49,29 @@
 #else
 #define STATIC static
 #endif
-
-
-
 typedef struct _KineticPDU KineticPDU;
 
 // Kinetic Device Client Connection
 typedef struct _KineticConnection {
-    bool    connected;       // state of connection
-    int     socket;          // socket file descriptor
-    int64_t connectionID;    // initialized to seconds since epoch
-    int64_t sequence;        // increments for each request in a session
-    struct kinetic_list_head  pdus;  // list of dynamically allocated PDUs
-    KineticSession session;  // session configuration
-	pthread_mutex_t mutex;
+    bool    					connected;       // state of connection
+    int     					socket;          // socket file descriptor
+    int64_t 					connectionID;    // initialized to seconds since epoch
+    int64_t 					sequence;        // increments for each request in a session
+    KineticSession 				session;  // session configuration
+	pthread_mutex_t 			mutex;
+	struct kinetic_list_head 	free_op_list;
+	struct kinetic_list_head	pending_op_list;
+	struct kinetic_list_head 	inprogress_op_list;
+	pthread_mutex_t				pending_op_mutex;
+	pthread_mutex_t				inprogress_op_mutex;
+	pthread_t					send_thread;
+	pthread_t					rcv_thread;
+	int							send_epoll;
+	int							rcv_epoll;
+	int							send_fd;
+	KineticPDU					*rawPDU;
 } KineticConnection;
-#define KINETIC_CONNECTION_INIT(_con) { \
-    (*_con) = (KineticConnection) { \
-        .connected = false, \
-        .socket = -1, \
-        .connectionID = time(NULL), \
-        .sequence = 0, \
-    }; \
-    /*(*_con).key = (ByteArray){.data = (*_con).keyData, .len = (_key).len};*/ \
-    /*if ((_key).data != NULL && (_key).len > 0) {*/ \
-    /*    memcpy((_con)->keyData, (_key).data, (_key).len); }*/ \
-}
+
 
 
 // Kinetic Message HMAC
@@ -94,53 +96,7 @@ typedef struct _KineticMessage {
     KineticProto_Range       	range;
     uint8_t                     hmacData[KINETIC_HMAC_MAX_LEN];
 } KineticMessage;
-/*
-#define KINETIC_MESSAGE_HEADER_INIT(_hdr, _con) { \
-    assert((_hdr) != NULL); \
-    assert((_con) != NULL); \
-    *(_hdr) = (KineticProto_Header) { \
-        .base = PROTOBUF_C_MESSAGE_INIT(&KineticProto_header__descriptor), \
-        .has_clusterVersion = true, \
-        .clusterVersion = (_con)->session.clusterVersion, \
-        .has_identity = true, \
-        .identity = (_con)->session.identity, \
-        .has_connectionID = true, \
-        .connectionID = (_con)->connectionID, \
-        .has_sequence = true, \
-        .sequence = (_con)->sequence, \
-    }; \
-}
 
-#define KINETIC_MESSAGE_INIT(msg) { \
-    KineticProto__init(&(msg)->proto); \
-    KineticProto_command__init(&(msg)->command); \
-    KineticProto_header__init(&(msg)->header); \
-    KineticProto_status__init(&(msg)->status); \
-    KineticProto_body__init(&(msg)->body); \
-    KineticProto_key_value__init(&(msg)->keyValue); \
-    memset((msg)->hmacData, 0, SHA_DIGEST_LENGTH); \
-    (msg)->proto.hmac.data = (msg)->hmacData; \
-    (msg)->proto.hmac.len = KINETIC_HMAC_MAX_LEN; \
-    (msg)->proto.has_hmac = true; \
-    (msg)->command.header = &(msg)->header; \
-    (msg)->proto.command = &(msg)->command; \
-}
-
-#define KINETIC_MESSAGE_INIT(msg) { \
-    KineticProto__init(&(msg)->proto); \
-    KineticProto_command__init(&(msg)->command); \
-    KineticProto_header__init(&(msg)->header); \
-    KineticProto_status__init(&(msg)->status); \
-    KineticProto_body__init(&(msg)->body); \
-    KineticProto_range__init(&(msg)->range); \
-    memset((msg)->hmacData, 0, SHA_DIGEST_LENGTH); \
-    (msg)->proto.hmac.data = (msg)->hmacData; \
-    (msg)->proto.hmac.len = KINETIC_HMAC_MAX_LEN; \
-    (msg)->proto.has_hmac = true; \
-    (msg)->command.header = &(msg)->header; \
-    (msg)->proto.command = &(msg)->command; \
-}
-*/
 // Kinetic PDU Header
 #define PDU_HEADER_LEN              (1 + (2 * sizeof(int32_t)))
 #define PDU_PROTO_MAX_LEN           (1024 * 1024)
@@ -160,7 +116,7 @@ typedef struct __attribute__((__packed__)) _KineticPDUHeader {
 // Kinetic PDU
 struct _KineticPDU {
     // Binary PDU header
-    KineticPDUHeader header;    // Header struct in native byte order
+    KineticPDUHeader header;    // Header struct in native byte order must be first member
     KineticPDUHeader headerNBO; // Header struct in network-byte-order
 
     // Message associated with this PDU instance
@@ -187,33 +143,20 @@ struct _KineticPDU {
     // Exchange associated with this PDU instance (info gets embedded in protobuf message)
     KineticConnection* connection;
 };
-/*
-#define KINETIC_PDU_INIT(_pdu, _con) { \
-    assert((_pdu) != NULL); \
-    assert((_con) != NULL); \
-    memset(_pdu, 0, sizeof(KineticPDU)); \
-    (_pdu)->connection = (_con); \
-    (_pdu)->header = KINETIC_PDU_HEADER_INIT; \
-    (_pdu)->headerNBO = KINETIC_PDU_HEADER_INIT; \ 
-    (_pdu)->value = BYTE_ARRAY_NONE; \ FIXME
-    (_pdu)->proto = &(_pdu)->protoData.message.proto; \ FIXME
-    KINETIC_MESSAGE_HEADER_INIT(&((_pdu)->protoData.message.header), (_con)); \
-}
-#define KINETIC_PDU_INIT_WITH_MESSAGE(_pdu, _con) { \
-    KINETIC_PDU_INIT((_pdu), (_con)) \
-    (_pdu)->proto = &(_pdu)->protoData.message.proto; \
-    KINETIC_MESSAGE_INIT(&((_pdu)->protoData.message)); \
-    (_pdu)->proto->command = &(_pdu)->protoData.message.command; \
-    (_pdu)->proto->command->header = &(_pdu)->protoData.message.header; \
-    KINETIC_MESSAGE_HEADER_INIT(&(_pdu)->protoData.message.header, (_con)); \
-}
 
-*/
+typedef  void (*Kinetic_Callback)(KineticStatus, void *);
+
 // Kinetic Operation
 typedef struct _KineticOperation {
-    KineticConnection* connection;  // Associated KineticSession
-    KineticPDU* request;
-    KineticPDU* response;
+	struct kinetic_list_node list; /* must be the first member */
+    KineticConnection* 		connection;  // Associated KineticSession
+    KineticPDU 				request;
+    KineticPDU 				response;
+    pthread_cond_t			callback_cond;
+    pthread_mutex_t			callback_mutex;
+    Kinetic_Callback		callback_internal;
+    KineticStatus 			status;
+
 } KineticOperation;
 #define KINETIC_OPERATION_INIT(_op, _con) \
     assert((_op) != NULL); \
@@ -222,14 +165,6 @@ typedef struct _KineticOperation {
         .connection = (_con), \
     }
 
-// // Structure for defining a custom memory allocator.
-// typedef struct
-// {
-//     void        *(*alloc)(void *allocator_data, size_t size);
-//     void        (*free)(void *allocator_data, void *pointer);
-//     // Opaque pointer passed to `alloc` and `free` functions
-//     void        *allocator_data;
-// } ProtobufCAllocator;
 
 KineticProto_Algorithm KineticProto_Algorithm_from_KineticAlgorithm(
     KineticAlgorithm kinteicAlgorithm);

@@ -21,7 +21,6 @@
 #ifndef _KINETIC_TYPES_H
 #define _KINETIC_TYPES_H
 
-// Include C99 bool definition, if not already defined
 #if !defined(__bool_true_false_are_defined) || (__bool_true_false_are_defined == 0)
 #include <stdbool.h>
 #endif
@@ -44,16 +43,14 @@
 #define KINETIC_MAX_VERSION_LEN (256)
 #define PDU_VALUE_MAX_LEN       (1024 * 1024)
 
-// Define max host name length
-// Some Linux environments require this, although not all, but it's benign.
 #ifndef _BSD_SOURCE
 #define _BSD_SOURCE
-#endif // _BSD_SOURCE
+#endif 
 #include <unistd.h>
 #include <sys/types.h>
 #ifndef HOST_NAME_MAX
 #define HOST_NAME_MAX 256
-#endif // HOST_NAME_MAX
+#endif 
 
 #ifndef LOG_FILE_NAME_MAX
 #define LOG_FILE_NAME_MAX (HOST_NAME_MAX)
@@ -157,7 +154,8 @@ typedef enum {
     KINETIC_STATUS_SOCKET_TIMEOUT,      // A timeout occurred while waiting for a socket operation
     KINETIC_STATUS_SOCKET_ERROR,        // An I/O error occurred during a socket operation
     KINETIC_STATUS_COUNT,               // Number of status codes in KineticStatusDescriptor
-	KINETIC_STATUS_INTERNAL_ERROR		// internal error
+	KINETIC_STATUS_INTERNAL_ERROR,		// internal error
+	KINETIC_STATUS_PENDING				// request is in progress
 } KineticStatus;
 extern const char* KineticStatusDescriptor[];
 
@@ -173,6 +171,7 @@ typedef struct _KineticEntry {
     bool metadataOnly;
     KineticSynchronization synchronization;
     ByteBuffer value;
+	void       *reference;
 } KineticEntry;
 
 

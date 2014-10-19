@@ -28,11 +28,9 @@ void KineticConnection_FreeConnection(KineticSessionHandle* const handle);
 KineticConnection* KineticConnection_FromHandle(KineticSessionHandle handle);
 KineticStatus KineticConnection_Connect(KineticConnection* const connection);
 KineticStatus KineticConnection_Disconnect(KineticConnection* const connection);
-void KineticConnection_IncrementSequence(KineticConnection* const connection);
+int64_t KineticConnection_GetNextSequence(KineticConnection* const connection);
 void KineticConnection_Lock(KineticConnection* const connection);
 void KineticConnection_Unlock(KineticConnection* const connection);
 void KineticConnection_DeInit(void);
 void KineticConnection_Init(void);
-
-
 #endif // _KINETIC_CONNECTION_H

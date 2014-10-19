@@ -29,58 +29,44 @@
 #include "kinetic_allocator.h"
 #include <stdlib.h>
 
-static KineticStatus KineticClient_CreateOperation(
-    KineticOperation* const operation,
+static KineticOperation * KineticClient_CreateOperation(
     KineticSessionHandle handle, KineticProto_MessageType msg_type)
 {
     if (handle == KINETIC_HANDLE_INVALID) {
         LOG("Specified session has invalid handle value");
-        return KINETIC_STATUS_SESSION_EMPTY;
+        return NULL;
     }
-
     KineticConnection* connection = KineticConnection_FromHandle(handle);
     if (connection == NULL) {
         LOG("Specified session is not associated with a connection");
-        return KINETIC_STATUS_SESSION_INVALID;
+        return NULL;
     }
+    return ( KineticOperation_Create(connection, msg_type));
 
-    *operation = KineticOperation_Create(connection, msg_type);
-    if (operation->request == NULL || operation->response == NULL) {
-        return KINETIC_STATUS_NO_PDUS_AVAVILABLE;
-    }
-
-    return KINETIC_STATUS_SUCCESS;
 }
 
 static KineticStatus KineticClient_ExecuteOperation(KineticOperation* operation)
 {
-    KineticStatus status = KINETIC_STATUS_INVALID;
-
+	int64_t	val = 1; 
+#ifdef DEBUG
     LOGF("Executing operation: 0x%llX", operation);
-    if (operation->request->value.array.data != NULL
-      && operation->request->value.bytesUsed > 0) {
+    if ( (operation->request.value.array.data != NULL) &&
+         (operation->request.value.bytesUsed > 0)) {
         LOG("  Sending PDU w/value:");
     }
     else {
         LOG("  Sending PDU w/o value");
     }
+#endif
+    /* add into the pending list and signal */
+    pthread_mutex_lock(&operation->connection->pending_op_mutex);
+    kinetic_list_add_tail(&operation->list, &operation->connection->pending_op_list);
+    pthread_mutex_unlock(&operation->connection->pending_op_mutex);
+    write(operation->connection->send_fd, &val, sizeof(val));
 
-    KineticConnection_Lock(operation->request->connection);
-    // Send the request
-    status = KineticPDU_Send(operation->request);
-    if (status == KINETIC_STATUS_SUCCESS) {
-        // Associate response with same exchange as request
-        operation->response->connection = operation->request->connection;
+    return KINETIC_STATUS_PENDING;
 
-        // Receive the response
-        status = KineticPDU_Receive(operation->response);
-        if (status == KINETIC_STATUS_SUCCESS) {
-            status = KineticOperation_GetStatus(operation);
-        }
-    }
-    KineticConnection_Unlock(operation->request->connection);
 
-    return status;
 }
 
 KineticStatus KineticClient_Connect(const KineticSession* config,
@@ -148,32 +134,38 @@ KineticStatus KineticClient_Disconnect(KineticSessionHandle* const handle)
         LOG("Disconnection failed!");
     }
 
-    KineticAllocator_FreeAllPDUs(connection);
+    KineticAllocator_FreeAllOperations(connection);
     KineticConnection_FreeConnection(handle);
     *handle = KINETIC_HANDLE_INVALID;
 
     return status;
 }
-
+void    KineticClient_InternalWait(KineticOperation * operation)
+{
+		pthread_mutex_lock(&operation->callback_mutex);
+	    pthread_cond_wait(&operation->callback_cond, &operation->callback_mutex);
+}
+void    KineticClient_InternalCallback(KineticStatus status, void *ref)
+{
+	KineticOperation *operation = ref;
+	pthread_cond_signal(&operation->callback_cond);
+	operation->status = status;
+}
 KineticStatus KineticClient_NoOp(KineticSessionHandle handle)
 {
     KineticStatus status;
-    KineticOperation operation;
+    KineticOperation *operation;
+    if ((operation = KineticClient_CreateOperation( handle,  KINETIC_PROTO_MESSAGE_TYPE_NOOP))
+    		== NULL)
+    	return  KINETIC_STATUS_NO_PDUS_AVAVILABLE;
+    KineticOperation_BuildNoop(operation);
+    operation->callback_internal = KineticClient_InternalCallback;
 
-    status = KineticClient_CreateOperation(&operation, handle, 
-			 KINETIC_PROTO_MESSAGE_TYPE_NOOP);
-    if (status != KINETIC_STATUS_SUCCESS) {
-        return status;
+    if ((status = KineticClient_ExecuteOperation(operation)) == KINETIC_STATUS_PENDING) {
+        	KineticClient_InternalWait(operation);
+        	status = operation->status;
     }
-
-    // Initialize request
-    KineticOperation_BuildNoop(&operation);
-
-    // Execute the operation
-    status = KineticClient_ExecuteOperation(&operation);
-
-    KineticOperation_Free(&operation);
-
+    KineticOperation_Free(operation);
     return status;
 }
 
@@ -181,30 +173,26 @@ KineticStatus KineticClient_Put(KineticSessionHandle handle,
                                 KineticEntry* const entry)
 {
     KineticStatus status;
-    KineticOperation operation;
+    KineticOperation *operation;
 
-    status = KineticClient_CreateOperation(&operation, handle,
-			 KINETIC_PROTO_MESSAGE_TYPE_PUT);
-    if (status != KINETIC_STATUS_SUCCESS) {
-        return status;
+    if ((operation = KineticClient_CreateOperation( handle,
+			 KINETIC_PROTO_MESSAGE_TYPE_PUT)) == NULL)
+    	return  KINETIC_STATUS_NO_PDUS_AVAVILABLE;
+
+    KineticOperation_BuildPut(operation, entry);
+    operation->callback_internal = KineticClient_InternalCallback;
+
+    if ((status = KineticClient_ExecuteOperation(operation)) == KINETIC_STATUS_PENDING) {
+        	KineticClient_InternalWait(operation);
+        	status = operation->status;
     }
-
-    // Initialize request
-    KineticOperation_BuildPut(&operation, entry);
-
-    // Execute the operation
-    status = KineticClient_ExecuteOperation(&operation);
-
     if (status == KINETIC_STATUS_SUCCESS) {
-        // Propagate newVersion to dbVersion in metadata, if newVersion specified
         if (entry->newVersion.array.data != NULL && entry->newVersion.array.len > 0) {
             entry->dbVersion = entry->newVersion;
             entry->newVersion = BYTE_BUFFER_NONE;
         }
     }
-
-    KineticOperation_Free(&operation);
-
+    KineticOperation_Free(operation);
     return status;
 }
 
@@ -215,27 +203,19 @@ KineticStatus KineticClient_Get(KineticSessionHandle handle,
     if (!entry->metadataOnly) {
         assert(entry->value.array.data != NULL);
     }
-
     KineticStatus status;
-    KineticOperation operation;
-
-    status = KineticClient_CreateOperation(&operation, handle,
-			 KINETIC_PROTO_MESSAGE_TYPE_GET);
-    if (status != KINETIC_STATUS_SUCCESS) {
-        return status;
-    }
-
-    // Initialize request
-    KineticOperation_BuildGet(&operation, entry);
-
-    // Execute the operation
-    status = KineticClient_ExecuteOperation(&operation);
-
-
-    // Update the entry upon success
-    // entry->value.array.len = 0;
+    KineticOperation *operation;
+    if ((operation = KineticClient_CreateOperation( handle,
+			 KINETIC_PROTO_MESSAGE_TYPE_GET)) == NULL)
+		return  KINETIC_STATUS_NO_PDUS_AVAVILABLE;
+    KineticOperation_BuildGet(operation, entry);
+    operation->callback_internal = KineticClient_InternalCallback;
+    if ((status = KineticClient_ExecuteOperation(operation)) == KINETIC_STATUS_PENDING) {
+    	KineticClient_InternalWait(operation);
+    	status = operation->status;
+	}
     if (status == KINETIC_STATUS_SUCCESS) {
-        KineticProto_KeyValue* keyValue = KineticPDU_GetKeyValue(operation.response);
+        KineticProto_KeyValue* keyValue = KineticPDU_GetKeyValue(&operation->response);
         if (keyValue != NULL) {
             if (!Copy_KineticProto_KeyValue_to_KineticEntry(keyValue, entry)) {
                 status = KINETIC_STATUS_BUFFER_OVERRUN;
@@ -243,7 +223,7 @@ KineticStatus KineticClient_Get(KineticSessionHandle handle,
         }
     }
 
-    KineticOperation_Free(&operation);
+    KineticOperation_Free(operation);
 
     return status;
 }
@@ -252,28 +232,24 @@ KineticStatus KineticClient_Delete(KineticSessionHandle handle,
                                    KineticEntry* const entry)
 {
     KineticStatus status;
-    KineticOperation operation;
+    KineticOperation *operation;
 
-    status = KineticClient_CreateOperation(&operation, handle,
-			 KINETIC_PROTO_MESSAGE_TYPE_GET);
-    if (status != KINETIC_STATUS_SUCCESS) {
-        return status;
+    if ((operation = KineticClient_CreateOperation(handle,
+			 KINETIC_PROTO_MESSAGE_TYPE_GET)) == NULL)
+    	return  KINETIC_STATUS_NO_PDUS_AVAVILABLE;
+    KineticOperation_BuildDelete(operation, entry);
+    operation->callback_internal = KineticClient_InternalCallback;
+
+    if ((status = KineticClient_ExecuteOperation(operation)) == KINETIC_STATUS_PENDING) {
+        	KineticClient_InternalWait(operation);
+        	status = operation->status;
     }
-
-    // Initialize request
-    KineticOperation_BuildDelete(&operation, entry);
-
-    // Execute the operation
-    status = KineticClient_ExecuteOperation(&operation);
-
-    KineticOperation_Free(&operation);
-
+    KineticOperation_Free(operation);
     return status;
 }
 
 KineticStatus KineticClient_Init(const char *logFile, int logLevel)
 {
-
 	KineticConnection_Init();
 	return KineticLogger_Init(logFile, logLevel);
 }
@@ -289,18 +265,19 @@ KineticStatus KineticClient_GetRange(KineticSessionHandle handle,
 {
     assert(range != NULL );
     KineticStatus status;
-    KineticOperation operation;
-    status = KineticClient_CreateOperation(&operation, handle,
-			 KINETIC_PROTO_MESSAGE_TYPE_GETKEYRANGE);
-    if (status != KINETIC_STATUS_SUCCESS) {
-        return status;
+    KineticOperation *operation;
+    if ((operation = KineticClient_CreateOperation(handle,
+			 KINETIC_PROTO_MESSAGE_TYPE_GETKEYRANGE)) == NULL)
+    return  KINETIC_STATUS_NO_PDUS_AVAVILABLE;
+    KineticOperation_BuildGetRange(operation, range);
+    if ((status = KineticClient_ExecuteOperation(operation)) == KINETIC_STATUS_PENDING) {
+        	KineticClient_InternalWait(operation);
+        	status = operation->status;
     }
-    KineticOperation_BuildGetRange(&operation, range);
-    status = KineticClient_ExecuteOperation(&operation);
     if (status == KINETIC_STATUS_SUCCESS) {
-        status  = KineticPDU_GetKeyRange(operation.response, range);
+        status  = KineticPDU_GetKeyRange(&operation->response, range);
     }
-    KineticOperation_Free(&operation);
+    KineticOperation_Free(operation);
     return status;
 }
 

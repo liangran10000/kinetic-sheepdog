@@ -104,6 +104,7 @@ KineticStatus ExecuteOperation(
     }
 
     else if (strcmp("put", operation) == 0) {
+    	entry->force = true;
         status = KineticClient_Put(sessionHandle, entry);
         if (status == KINETIC_STATUS_SUCCESS) {
             printf("\nPut operation completed successfully."

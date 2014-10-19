@@ -64,7 +64,6 @@ void KineticLogger_Close(void)
         fclose(FileDesc);
     }
 }
-
 void KineticLogger_Log(const char* message)
 {
     if (message == NULL || LogLevel < 0) {

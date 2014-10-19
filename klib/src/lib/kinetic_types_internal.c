@@ -17,7 +17,7 @@
 * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 *
 */
-
+#include "kinetic_types.h"
 #include "kinetic_types_internal.h"
 #include "kinetic_logger.h"
 

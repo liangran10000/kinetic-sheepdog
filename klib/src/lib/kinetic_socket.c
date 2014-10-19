@@ -17,18 +17,21 @@
 * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 *
 */
-
-#include "kinetic_socket.h"
-#include "kinetic_logger.h"
-#include "kinetic_types_internal.h"
-#include "kinetic_proto.h"
-#include "protobuf-c/protobuf-c.h"
-
+#define _BSD_SOURCE
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include "kinetic_socket.h"
+#include "kinetic_logger.h"
+#include "kinetic_types_internal.h"
+#include "kinetic_proto.h"
+#include "protobuf-c/protobuf-c.h"
+#include "kinetic_pdu.h"
 
 #ifndef _BSD_SOURCE
 #define _BSD_SOURCE
@@ -43,265 +46,107 @@
 #include <netdb.h>
 #include <signal.h>
 #include <unistd.h>
-#include "socket99/socket99.h"
+#include <pthread.h>
+#include <sys/epoll.h>
+#include <sys/eventfd.h>
+
+#define KINETIC_SEND_RETRY	(10 * 1000)
+#define KINETIC_RCV_RETRY	(10 * 1000)
+uint8_t		discard_buf[1024 * 1024];
+ByteBuffer discard = {.array.data = discard_buf, .array.len = sizeof(discard_buf) };
 
 
 int KineticSocket_Connect(const char* host, int port, bool nonBlocking)
 {
-    char port_str[32];
-    struct addrinfo hints;
-    struct addrinfo* ai_result = NULL;
-    struct addrinfo* ai = NULL;
-    socket99_result result;
+	struct sockaddr_in addr;
+	int rc, buf_size = (4096 *4096),
+			fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (fd < 0 ) {
+		 LOGF("Error connecting to %s:%d error%s", host, port, strerror(errno));
+		 return fd;
+	}
+	addr.sin_family = AF_INET;
+	addr.sin_addr.s_addr = INADDR_ANY;
+	addr.sin_port	= INADDR_ANY;
+	if ((rc = bind(fd, (struct sockaddr *)&addr, sizeof(addr))) < 0){
+		LOGF("Local Bind error for %s:%d error%s", host, port, strerror(errno));
+		return rc;
+	}
 
-    // Setup server address info
-    socket99_config cfg = {
-        .host = (char*)host,
-        .port = port,
-        .nonblocking = nonBlocking,
-    };
-    sprintf(port_str, "%d", port);
-
-    // Open socket
-    LOGF("Connecting to %s:%d", host, port);
-    if (!socket99_open(&cfg, &result)) {
-        LOGF("Failed to open socket connection"
-             "with host: status %d, errno %d",
-             result.status, result.saved_errno);
-        return KINETIC_SOCKET_DESCRIPTOR_INVALID;
-    }
-
-    // Configure the socket
-    socket99_set_hints(&cfg, &hints);
-    if (getaddrinfo(cfg.host, port_str, &hints, &ai_result) != 0) {
-        LOGF("Failed to get socket address info: errno %d", errno);
-        close(result.fd);
-        return KINETIC_SOCKET_DESCRIPTOR_INVALID;
-    }
-
-    for (ai = ai_result; ai != NULL; ai = ai->ai_next) {
-        int setsockopt_result;
-        int buffer_size = PDU_VALUE_MAX_LEN;
-
-#if defined(SO_NOSIGPIPE) && !defined(__APPLE__)
-        // On BSD-like systems we can set SO_NOSIGPIPE on the socket to
-        // prevent it from sending a PIPE signal and bringing down the whole
-        // application if the server closes the socket forcibly
-        int enable = 1;
-        setsockopt_result = setsockopt(result.fd,
-                                       SOL_SOCKET, SO_NOSIGPIPE,
-                                       &enable, sizeof(enable));
-        // Allow ENOTSOCK because it allows tests to use pipes instead of
-        // real sockets
-        if (setsockopt_result != 0 && setsockopt_result != ENOTSOCK) {
-            LOG("Failed to set SO_NOSIGPIPE on socket");
-            continue;
-        }
-#endif
-
-        // Increase send buffer to PDU_VALUE_MAX_LEN
-        // Note: OS allocates 2x this value for its overhead
-        setsockopt_result = setsockopt(result.fd,
-                                       SOL_SOCKET, SO_SNDBUF,
-                                       &buffer_size, sizeof(buffer_size));
-        if (setsockopt_result == -1) {
-            LOG("Error setting socket send buffer size");
-            continue;
-        }
-
-        // Increase receive buffer to PDU_VALUE_MAX_LEN
-        // Note: OS allocates 2x this value for its overheadbuffer_size
-        setsockopt_result = setsockopt(result.fd,
-                                       SOL_SOCKET, SO_RCVBUF,
-                                       &buffer_size, sizeof(buffer_size));
-        if (setsockopt_result == -1) {
-            LOG("Error setting socket receive buffer size");
-            continue;
-        }
-
-        break;
-    }
-
-    freeaddrinfo(ai_result);
-
-    if (ai == NULL || result.fd == KINETIC_SOCKET_DESCRIPTOR_INVALID) {
-        // we went through all addresses without finding one we could bind to
-        LOGF("Could not connect to %s:%d", host, port);
-        return KINETIC_SOCKET_DESCRIPTOR_INVALID;
-    }
-    else {
-        LOGF("Successfully connected to %s:%d (fd=%d)", host, port, result.fd);
-        return result.fd;
-    }
+	addr.sin_port = htons(port);
+	inet_aton(host, &(addr.sin_addr));
+	if ((rc = connect(fd, (struct sockaddr *)&addr, sizeof(addr))) < 0 ) {
+		LOGF("Connect failed for %s:%d error%s", host, port, strerror(errno));
+		return rc;
+	}
+	// ignore errors
+	setsockopt(fd,SOL_SOCKET, SO_SNDBUF, &buf_size, sizeof(buf_size));
+	setsockopt(fd,SOL_SOCKET, SO_RCVBUF, &buf_size, sizeof(buf_size));
+	if (nonBlocking)
+		if ((rc = fcntl(fd, F_SETFL, O_NONBLOCK)) < 0) {
+			LOGF("non-blocking mode for %s:%d error%s", host, port, strerror(errno));
+			close(fd);
+			return rc;
+		}
+	return fd;
 }
 
 void KineticSocket_Close(int socket)
 {
-    if (socket == -1) {
-        LOG("Not connected so no cleanup needed");
-    }
-    else {
-        LOGF("Closing socket with fd=%d", socket);
-        if (close(socket) == 0) {
-            LOG("Socket closed successfully");
-        }
-        else {
-            LOGF("Error closing socket file descriptor!"
-                 " (fd=%d, errno=%d, desc='%s')",
-                 socket, errno, strerror(errno));
-        }
-    }
+	close(socket);
 }
 
-KineticStatus KineticSocket_Read(int socket, ByteBuffer* dest, size_t len)
+
+static KineticStatus __KineticSocket_Read(int socket, ByteBuffer* dest, size_t len)
 {
+#ifdef DEBUG
     LOGF("Reading %zd bytes into buffer @ 0x%zX from fd=%d",
          len, (size_t)dest->array.data, socket);
-
-    KineticStatus status = KINETIC_STATUS_INVALID;
-
-    // Read "up to" the allocated number of bytes into dest buffer
+#endif
     size_t bytesToReadIntoBuffer = len;
     if (dest->array.len < len) {
         bytesToReadIntoBuffer = dest->array.len;
     }
     while (dest->bytesUsed < bytesToReadIntoBuffer) {
-        int opStatus;
-        fd_set readSet;
-        struct timeval timeout;
-
-        // Time out after 5 seconds
-        timeout.tv_sec = 5;
-        timeout.tv_usec = 0;
-
-        FD_ZERO(&readSet);
-        FD_SET(socket, &readSet);
-        opStatus = select(socket + 1, &readSet, NULL, NULL, &timeout);
-
-        if (opStatus < 0) { // Error occurred
-            LOGF("Failed waiting to read from socket!"
-                 " status=%d, errno=%d, desc='%s'",
-                 opStatus, errno, strerror(errno));
-            return KINETIC_STATUS_SOCKET_ERROR;
-        }
-        else if (opStatus == 0) { // Timeout occurred
-            LOG("Timed out waiting for socket data to arrive!");
-            return KINETIC_STATUS_SOCKET_TIMEOUT;
-        }
-        else if (opStatus > 0) { // Data available to read
-            // The socket is ready for reading
-            opStatus = read(socket,
-                          &dest->array.data[dest->bytesUsed],
+    	int opStatus = read(socket, &dest->array.data[dest->bytesUsed],
                           dest->array.len - dest->bytesUsed);
-            // Retry if no data yet...
-            if (opStatus == -1 &&
-                ((errno == EINTR) ||
-                 (errno == EAGAIN) ||
-                 (errno == EWOULDBLOCK)
-                )) {
+            if (opStatus == -1 && ((errno == EINTR) || (errno == EAGAIN) || (errno == EWOULDBLOCK) )){
+            	usleep(KINETIC_RCV_RETRY);
                 continue;
             }
             else if (opStatus <= 0) {
-                LOGF("Failed to read from socket!"
-                     " status=%d, errno=%d, desc='%s'",
+#				ifdef DEBUG
+                LOGF("Failed to read from socket! status=%d, errno=%d, desc='%s'",
                      opStatus, errno, strerror(errno));
+#				endif
                 return KINETIC_STATUS_SOCKET_ERROR;
             }
             else {
                 dest->bytesUsed += opStatus;
-                LOGF("Received %d bytes (%zd of %zd)",
-                     opStatus, dest->bytesUsed, len);
+#				ifdef DEBUG
+                LOGF("Received %d bytes (%zd of %zd)", opStatus, dest->bytesUsed, len);
+#				endif
             }
-        }
     }
 
-    // Flush any remaining data, in case of a truncated read w/short dest buffer
-    if (dest->bytesUsed < len) {
-        bool abortFlush = false;
-
-        uint8_t *discardedBytes = malloc(len - dest->bytesUsed);
-        if (discardedBytes == NULL) {
-            LOG("Failed allocating a socket read discard buffer!");
-            abortFlush = true;
-            status = KINETIC_STATUS_MEMORY_ERROR;
-        }
-        
-        while (!abortFlush && dest->bytesUsed < len) {
-            int opStatus;
-            fd_set readSet;
-            struct timeval timeout;
-            size_t remainingLen = len - dest->bytesUsed;
-
-            // Time out after 5 seconds
-            timeout.tv_sec = 5;
-            timeout.tv_usec = 0;
-
-            FD_ZERO(&readSet);
-            FD_SET(socket, &readSet);
-            opStatus = select(socket + 1, &readSet, NULL, NULL, &timeout);
-
-            if (opStatus < 0) { // Error occurred
-                LOGF("Failure trying to flush read socket data!"
-                     " status=%d, errno=%d, desc='%s'",
-                     status, errno, strerror(errno));
-                abortFlush = true;
-                status = KINETIC_STATUS_SOCKET_ERROR;
-                continue;
-            }
-            else if (opStatus == 0) { // Timeout occurred
-                LOG("Timed out waiting to flush socket data!");
-                abortFlush = true;
-                status = KINETIC_STATUS_SOCKET_TIMEOUT;
-                continue;
-            }
-            else if (opStatus > 0) { // Data available to read
-                // The socket is ready for reading
-                opStatus = read(socket, discardedBytes, remainingLen);
-                // Retry if no data yet...
-                if (opStatus == -1 &&
-                    ((errno == EINTR) ||
-                     (errno == EAGAIN) ||
-                     (errno == EWOULDBLOCK)
-                    )) {
-                    continue;
-                }
-                else if (opStatus <= 0) {
-                    LOGF("Failed to read from socket while flushing!"
-                         " status=%d, errno=%d, desc='%s'",
-                         opStatus, errno, strerror(errno));
-                    abortFlush = true;
-                    status = KINETIC_STATUS_SOCKET_ERROR;
-                }
-                else {
-                    dest->bytesUsed += opStatus;
-                    LOGF("Flushed %d bytes from socket read pipe (%zd of %zd)",
-                         opStatus, dest->bytesUsed, len);
-                }
-            }
-        }
-
-        // Free up dynamically allocated memory before returning
-        if (discardedBytes != NULL) {
-            free(discardedBytes);
-        }
-
-        // Report any error that occurred during socket flush
-        if (abortFlush) {
-            LOG("Socket read pipe flush aborted!");
-            assert(status == KINETIC_STATUS_SUCCESS);
-            return status;
-        }
-
-        // Report truncation of data for any variable length byte arrays
-        LOGF("Socket read buffer was truncated due to buffer overrun!"
-            " received=%zu, copied=%zu",
-            len, dest->array.len);
-        return KINETIC_STATUS_BUFFER_OVERRUN;
-    }
-
+#ifdef DEBUG
     LOGF("Received %zd of %zd bytes requested", dest->bytesUsed, len);
-
+#endif
     return KINETIC_STATUS_SUCCESS;
+}
+KineticStatus KineticSocket_Read(int socket, ByteBuffer* dest, size_t len)
+{
+	KineticStatus status = __KineticSocket_Read(socket,  dest, len);
+	// Flush any remaining data, in case of a truncated read w/short dest buffer
+	 if (status == KINETIC_STATUS_SUCCESS && dest->bytesUsed < len) {
+		 size_t remaining = len - dest->bytesUsed;
+		 assert(remaining <= sizeof(discard_buf));
+		 discard.bytesUsed = 0;
+		 if ((status = __KineticSocket_Read(socket,  &discard, remaining)) ==
+				 KINETIC_STATUS_SUCCESS)
+			 status = KINETIC_STATUS_BUFFER_OVERRUN;
+	 }
+	 return status;
 }
 
 KineticStatus KineticSocket_ReadProtobuf(int socket, KineticPDU* pdu)
@@ -341,6 +186,7 @@ KineticStatus KineticSocket_Write(int socket, ByteBuffer* src)
         if (status == -1 &&
             ((errno == EINTR) || (errno == EAGAIN) || (errno == EWOULDBLOCK))) {
             LOG("Write interrupted. retrying...");
+            usleep(KINETIC_SEND_RETRY);
             continue;
         }
         else if (status <= 0) {
@@ -370,4 +216,61 @@ KineticStatus KineticSocket_WriteProtobuf(int socket, KineticPDU* pdu)
     buffer.bytesUsed = len;
 
     return KineticSocket_Write(socket, &buffer);
+}
+
+void * rcv_thread(void *arg)
+{
+	KineticConnection *connection = arg;
+	struct epoll_event events;
+	int count;
+	for (;;) { 
+		if ((count = epoll_wait(connection->rcv_epoll, &events, 1, -1)) <= 0) {
+				LOGF("rcv thread wakeup with no event %d %s", count, strerror(errno));
+				continue;
+		}
+		KineticPDU_Receive(connection);
+	}
+}
+void * send_thread(void *arg)
+{
+	KineticConnection *connection = arg;
+	struct epoll_event events[EPOLL_EVENT_MAX];
+	KineticOperation *op;
+	uint64_t val;
+	int i, count;
+
+		for (;;) {
+			if ((count = epoll_wait(connection->send_epoll, events, 2, -1)) <= 0) {
+				LOGF("send thread wakeup with no event %d %s", count, strerror(errno));
+				continue;
+			}
+			LOGF("send thread wakeup with  event count ==%d", count);
+			assert (count >= 0 && count <= EPOLL_EVENT_MAX);
+			for (i = 0; i < count; i++){
+				if (events[i].data.fd == connection->send_fd)
+					read(connection->send_fd, &val, sizeof(val));
+			}
+			for (;;) {
+				pthread_mutex_lock(&connection->pending_op_mutex);
+				if(!kinetic_list_empty(&connection->pending_op_list)) {
+					op = kinetic_list_first_entry(&connection->pending_op_list,
+						KineticOperation, list);
+					assert(op);
+					LOGF("sending Op %p", op);
+					kinetic_list_del(&op->list);
+					pthread_mutex_unlock(&connection->pending_op_mutex);
+					pthread_mutex_lock(&connection->inprogress_op_mutex);
+					LOGF("moving to inprogress Op %p", op);
+					kinetic_list_add_tail(&op->list, &connection->inprogress_op_list);
+					pthread_mutex_unlock(&connection->inprogress_op_mutex);
+					KineticStatus Status = KineticPDU_Send(&op->request);
+					assert(Status == KINETIC_STATUS_SUCCESS);
+				}
+				else {
+					pthread_mutex_unlock(&connection->pending_op_mutex);
+					break;
+				}
+			}
+
+		}
 }

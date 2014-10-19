@@ -40,5 +40,4 @@ void KineticLogger_LogByteBuffer(const char* title, ByteBuffer buffer);
 #define LOG(message) KineticLogger_Log(message)
 #define LOGF(message, ...) KineticLogger_LogPrintf(message, __VA_ARGS__)
 #define LOG_LOCATION KineticLogger_LogPrintf("@ %s:%s:%d", __func__, __FILE__, __LINE__)
-
 #endif // _KINETIC_LOGGER_H

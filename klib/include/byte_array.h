@@ -49,4 +49,4 @@ bool ByteBuffer_AppendArray(ByteBuffer* buffer, const ByteArray array);
 bool ByteBuffer_AppendCString(ByteBuffer* buffer, const char* data);
 bool ByteBuffer_AppendDummyData(ByteBuffer* buffer, size_t len);
 
-#endif // _BYTE_ARRAY_H
+#endif

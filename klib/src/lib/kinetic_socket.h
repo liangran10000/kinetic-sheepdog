@@ -32,5 +32,7 @@ KineticStatus KineticSocket_ReadProtobuf(int socket, KineticPDU* pdu);
 
 KineticStatus KineticSocket_Write(int socket, ByteBuffer* src);
 KineticStatus KineticSocket_WriteProtobuf(int socket, KineticPDU* pdu);
+void * send_thread(void *arg);
+void * rcv_thread(void *arg);
 
 #endif // _KINETIC_SOCKET_H

@@ -23,10 +23,10 @@
 
 #include "kinetic_types_internal.h"
 #include "kinetic_proto.h"
-KineticOperation KineticOperation_Create(KineticConnection* const connection,
+KineticOperation *KineticOperation_Create(KineticConnection* const connection,
 				KineticProto_MessageType msg_type);
 KineticStatus KineticOperation_Free(KineticOperation* const operation);
-KineticStatus KineticOperation_GetStatus(const KineticOperation* const operation);
+KineticStatus KineticOperation_GetStatus(KineticOperation* operation);
 
 void KineticOperation_BuildNoop(KineticOperation* operation);
 void KineticOperation_BuildPut(KineticOperation* const operation,
