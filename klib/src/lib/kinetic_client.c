@@ -145,11 +145,66 @@ void    KineticClient_InternalWait(KineticOperation * operation)
 		pthread_mutex_lock(&operation->callback_mutex);
 	    pthread_cond_wait(&operation->callback_cond, &operation->callback_mutex);
 }
+void    Kinetic_EntryCallback(KineticOperation *operation, KineticEntry *entry)
+{
+	if (entry->callback){
+		KineticStatus status = operation->status;
+		KineticProto_KeyValue* keyValue;
+		switch(operation->msgType) {
+			case KINETIC_PROTO_MESSAGE_TYPE_PUT:
+				if (status == KINETIC_STATUS_SUCCESS)
+				    if (entry->newVersion.array.data != NULL && entry->newVersion.array.len > 0) {
+				            entry->dbVersion = entry->newVersion;
+				            entry->newVersion = BYTE_BUFFER_NONE;
+				     }
+				break;
+			case KINETIC_PROTO_MESSAGE_TYPE_GET:
+			case KINETIC_PROTO_MESSAGE_TYPE_DELETE:
+			default:
+				break;
+
+		}
+		 KineticOperation_Free(operation);
+		 entry->callback(status, entry);
+	}
+	else
+		pthread_cond_signal(&operation->callback_cond);
+
+}
+void    Kinetic_RangeCallback(KineticOperation *operation, KineticRange *range)
+{
+	if (range->callback){
+		KineticStatus status = operation->status;
+		if (status == KINETIC_STATUS_SUCCESS) {
+		        status  = KineticPDU_GetKeyRange(&operation->response, range);
+		 }
+		 KineticOperation_Free(operation);
+		 range->callback(status, range);
+	}
+	else
+		pthread_cond_signal(&operation->callback_cond);
+}
+
 void    KineticClient_InternalCallback(KineticStatus status, void *ref)
 {
 	KineticOperation *operation = ref;
-	pthread_cond_signal(&operation->callback_cond);
 	operation->status = status;
+	if (operation->userData) {
+		switch(operation->msgType) {
+		case  KINETIC_PROTO_MESSAGE_TYPE_GET:
+		case KINETIC_PROTO_MESSAGE_TYPE_PUT:
+		case KINETIC_PROTO_MESSAGE_TYPE_DELETE:
+			Kinetic_EntryCallback(operation, operation->userData);
+			break;
+		case KINETIC_PROTO_MESSAGE_TYPE_GETKEYRANGE:
+			Kinetic_RangeCallback(operation, operation->userData);
+		default:
+			break;
+		}
+	}
+	else
+		pthread_cond_signal(&operation->callback_cond);
+
 }
 KineticStatus KineticClient_NoOp(KineticSessionHandle handle)
 {
@@ -183,6 +238,7 @@ KineticStatus KineticClient_Put(KineticSessionHandle handle,
     operation->callback_internal = KineticClient_InternalCallback;
 
     if ((status = KineticClient_ExecuteOperation(operation)) == KINETIC_STATUS_PENDING) {
+    		if (entry->callback) return status;
         	KineticClient_InternalWait(operation);
         	status = operation->status;
     }
@@ -211,9 +267,11 @@ KineticStatus KineticClient_Get(KineticSessionHandle handle,
     KineticOperation_BuildGet(operation, entry);
     operation->callback_internal = KineticClient_InternalCallback;
     if ((status = KineticClient_ExecuteOperation(operation)) == KINETIC_STATUS_PENDING) {
+    	if (entry->callback) return status;
     	KineticClient_InternalWait(operation);
     	status = operation->status;
 	}
+/*
     if (status == KINETIC_STATUS_SUCCESS) {
         KineticProto_KeyValue* keyValue = KineticPDU_GetKeyValue(&operation->response);
         if (keyValue != NULL) {
@@ -222,7 +280,7 @@ KineticStatus KineticClient_Get(KineticSessionHandle handle,
             }
         }
     }
-
+*/
     KineticOperation_Free(operation);
 
     return status;
@@ -241,6 +299,7 @@ KineticStatus KineticClient_Delete(KineticSessionHandle handle,
     operation->callback_internal = KineticClient_InternalCallback;
 
     if ((status = KineticClient_ExecuteOperation(operation)) == KINETIC_STATUS_PENDING) {
+    		if (entry->callback) return status;
         	KineticClient_InternalWait(operation);
         	status = operation->status;
     }
@@ -271,6 +330,7 @@ KineticStatus KineticClient_GetRange(KineticSessionHandle handle,
     return  KINETIC_STATUS_NO_PDUS_AVAVILABLE;
     KineticOperation_BuildGetRange(operation, range);
     if ((status = KineticClient_ExecuteOperation(operation)) == KINETIC_STATUS_PENDING) {
+    		if (range->callback)	return status;
         	KineticClient_InternalWait(operation);
         	status = operation->status;
     }

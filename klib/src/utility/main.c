@@ -22,6 +22,13 @@
 #include <stdio.h>
 #include <getopt.h>
 #include <stdlib.h>
+#include <sys/time.h>
+#define  PENDING_LIMIT 20
+#define  REQ_LIMIT		1000
+static int pending_counts = 0;
+static int cmplt_counts = 0;
+struct timeval  	start;
+struct timeval 		end;
 
 void ParseOptions(
     const int argc,
@@ -51,9 +58,9 @@ void ReportOperationConfiguration(
 static KineticSession SessionConfig;
 static uint8_t HmacData[1024];
 static KineticEntry Entry;
-static uint8_t KeyData[1024];
-static uint8_t TagData[1024];
-static uint8_t VersionData[1024];
+static uint8_t KeyData[32];
+static uint8_t TagData[32];
+static uint8_t VersionData[32];
 static uint8_t ValueData[PDU_VALUE_MAX_LEN];
 static const char* TestDataString = "lorem ipsum... blah blah blah... etc.";
 
@@ -88,6 +95,43 @@ int main(int argc, char** argv)
     return 0;
 }
 
+void * put_callback(KineticStatus status, KineticEntry *entry)
+{
+	pending_counts--;
+	cmplt_counts++;
+	assert(status == KINETIC_STATUS_SUCCESS);
+#ifdef DEBUG
+	printf("\n=====PUT CALLBACK==== pending:%d cmplt:%d\n", pending_counts, cmplt_counts);
+#endif
+	if (cmplt_counts == REQ_LIMIT){
+		long perf;
+		gettimeofday(&end, NULL);
+		perf = (end.tv_sec - start.tv_sec);
+		perf = REQ_LIMIT/perf;
+		printf("\n ==== PUT PERFORMANC IN MB/SEC..... %ld\n", perf);
+	}
+
+	return entry;
+}
+
+void * get_callback(KineticStatus status, KineticEntry *entry)
+{
+	pending_counts--;
+	cmplt_counts++;
+	assert(status == KINETIC_STATUS_SUCCESS);
+#ifdef DEBUG
+	printf("\n=====GET CALLBACK==== pending:%d cmplt:%d\n", pending_counts, cmplt_counts);
+#endif
+	if (cmplt_counts == REQ_LIMIT){
+		long perf;
+		gettimeofday(&end, NULL);
+		perf = (end.tv_sec - start.tv_sec);
+		perf = REQ_LIMIT/perf;
+		printf("\n ==== PUT PERFORMANC IN MB/SEC..... %ld\n", perf);
+	}
+
+	return entry;
+}
 KineticStatus ExecuteOperation(
     const char* operation,
     KineticSessionHandle sessionHandle,
@@ -104,6 +148,7 @@ KineticStatus ExecuteOperation(
     }
 
     else if (strcmp("put", operation) == 0) {
+    	entry->callback = NULL;
     	entry->force = true;
         status = KineticClient_Put(sessionHandle, entry);
         if (status == KINETIC_STATUS_SUCCESS) {
@@ -111,12 +156,46 @@ KineticStatus ExecuteOperation(
                    " Your data has been stored!\n\n");
         }
     }
+	
+    else if (strcmp("put-rate", operation) == 0) {
+    	entry->callback = put_callback;
+    	entry->force = true;
+		gettimeofday(&start, NULL);
+		for (i = 0; i < REQ_LIMIT; i++) {
+			pending_counts++;
+        	status = KineticClient_Put(sessionHandle, entry);
+			assert(status == KINETIC_STATUS_PENDING);
+			while (pending_counts >= PENDING_LIMIT) {
+				usleep(10*1000);
+			}
+		}
+		sleep(600);
+	}
+	
+    else if (strcmp("get-rate", operation) == 0) {
+    	entry->callback = get_callback;
+		gettimeofday(&start, NULL);
+		for (i = 0; i < REQ_LIMIT; i++) {
+			pending_counts++;
+        	status = KineticClient_Get(sessionHandle, entry);
+			assert(status == KINETIC_STATUS_PENDING);
+			while (pending_counts >= PENDING_LIMIT) {
+				usleep(10*1000);
+			}
+		}
+		sleep(600);
+	}
 
     else if (strcmp("get", operation) == 0) {
+		char buf[32];
+    	entry->callback = NULL;
+		memset(entry->value.array.data, 0x00, sizeof(buf));
         status = KineticClient_Get(sessionHandle, entry);
         if (status == 0) {
             printf("\nGet executed successfully."
-                   "The entry has been retrieved!\n\n");
+                   "The entry has been retrieved! data:");
+			snprintf(buf, 30, "%s", entry->value.array.data);
+			printf("%s\n\n", buf);
         }
     }
 
@@ -144,15 +223,17 @@ KineticStatus ExecuteOperation(
 		}
 		
 		for (i = 0; i < MAX_KEYS; i++) {
+			entry->callback = put_callback;
 			entry->key.array.len = (uint32_t)sprintf((char *)(entry->key.array.data), "%08x", i);
 			entry->key.bytesUsed = entry->key.array.len;
 			entry->force = true;
         	status = KineticClient_Put(sessionHandle, entry);
-			if (status) {
+			if (status != KINETIC_STATUS_PENDING && status != KINETIC_STATUS_SUCCESS) {
 					printf("put failed ...\n"); return(1);
 			}
 		}
 		// get the last key
+		entry->callback = NULL;
 		status = KineticClient_Get(sessionHandle, entry);
 		if (status) {
 				printf("get failed ...\n"); return(1);
@@ -221,6 +302,7 @@ void ConfigureEntry(
            .algorithm = algorithm,
             .value = valueBuffer,
     };
+	entry->synchronization =  KINETIC_SYNCHRONIZATION_WRITEBACK;
 }
 
 void ReportOperationConfiguration(

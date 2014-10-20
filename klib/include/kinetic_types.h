@@ -159,25 +159,27 @@ typedef enum {
 } KineticStatus;
 extern const char* KineticStatusDescriptor[];
 
-
+typedef  void (*Kinetic_Callback)(KineticStatus, void *);
 // KineticEntry - byte arrays need to be preallocated by the client
 typedef struct _KineticEntry {
-    ByteBuffer key;
-    ByteBuffer newVersion;
-    ByteBuffer dbVersion;
-    ByteBuffer tag;
-    bool force;
-    KineticAlgorithm algorithm;
-    bool metadataOnly;
+	Kinetic_Callback	callback;
+    ByteBuffer 			key;
+    ByteBuffer 			newVersion;
+    ByteBuffer 			dbVersion;
+    ByteBuffer 			tag;
+    bool 				force;
+    KineticAlgorithm 	algorithm;
+    bool 				metadataOnly;
     KineticSynchronization synchronization;
-    ByteBuffer value;
-	void       *reference;
+    ByteBuffer 			value;
+	void       			*reference;
 } KineticEntry;
 
 
 
 // KineticRange - for extracting key range
 typedef struct _KineticRange {
+	Kinetic_Callback	callback;
     ByteBuffer startKey;
     ByteBuffer endKey;
     bool 	   startKeyInclusive;
@@ -186,6 +188,7 @@ typedef struct _KineticRange {
 	int		   maxRequested;
 	int		   returned;
 	ByteBuffer *keys;
+	void		*reference;
 } KineticRange;
 
 

@@ -144,7 +144,7 @@ struct _KineticPDU {
     KineticConnection* connection;
 };
 
-typedef  void (*Kinetic_Callback)(KineticStatus, void *);
+
 
 // Kinetic Operation
 typedef struct _KineticOperation {
@@ -156,7 +156,8 @@ typedef struct _KineticOperation {
     pthread_mutex_t			callback_mutex;
     Kinetic_Callback		callback_internal;
     KineticStatus 			status;
-
+    void					*userData;
+    KineticProto_MessageType msgType;
 } KineticOperation;
 #define KINETIC_OPERATION_INIT(_op, _con) \
     assert((_op) != NULL); \

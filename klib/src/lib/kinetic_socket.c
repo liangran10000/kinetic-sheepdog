@@ -152,7 +152,9 @@ KineticStatus KineticSocket_Read(int socket, ByteBuffer* dest, size_t len)
 KineticStatus KineticSocket_ReadProtobuf(int socket, KineticPDU* pdu)
 {
     size_t bytesToRead = pdu->header.protobufLength;
+#ifdef DEBUG
     LOGF("Reading %zd bytes of protobuf", bytesToRead);
+#endif
     ByteBuffer recvBuffer = ByteBuffer_Create(pdu->protobufRaw, bytesToRead);
     KineticStatus status = KineticSocket_Read(socket, &recvBuffer, bytesToRead);
 
@@ -160,9 +162,9 @@ KineticStatus KineticSocket_ReadProtobuf(int socket, KineticPDU* pdu)
         LOG("Protobuf read failed!");
         return status;
     }
-
+#ifdef DEBUG
     LOG("Read packed protobuf successfully!");
-
+#endif
     pdu->proto =
         KineticProto__unpack(NULL, recvBuffer.bytesUsed, recvBuffer.array.data);
     if (pdu->proto == NULL) {
@@ -172,14 +174,18 @@ KineticStatus KineticSocket_ReadProtobuf(int socket, KineticPDU* pdu)
     }
     else {
         pdu->protobufDynamicallyExtracted = true;
+#ifdef DEBUG
         LOG("Protobuf unpacked successfully!");
+#endif
         return KINETIC_STATUS_SUCCESS;
     }
 }
 
 KineticStatus KineticSocket_Write(int socket, ByteBuffer* src)
 {
+#ifdef DEBUG
     LOGF("Writing %zu bytes to socket...", src->bytesUsed);
+#endif
     for (unsigned int bytesSent = 0; bytesSent < src->bytesUsed;) {
         int bytesRemaining = src->bytesUsed - bytesSent;
         int status = write(socket, &src->array.data[bytesSent], bytesRemaining);
@@ -190,24 +196,28 @@ KineticStatus KineticSocket_Write(int socket, ByteBuffer* src)
             continue;
         }
         else if (status <= 0) {
-            LOGF("Failed to write to socket! status=%d, errno=%d\n", status, errno);
+            LOGF("Failed to write to socket! status=%d, errno=%s\n", status, strerror(errno));
             return KINETIC_STATUS_SOCKET_ERROR;
         }
         else {
             bytesSent += status;
+#ifdef DEBUG
             LOGF("Wrote %d bytes (%d of %zu sent)", status, bytesSent, src->bytesUsed);
+#endif
         }
     }
-
+#ifdef DEBUG
     LOG("Socket write completed successfully");
-
+#endif
     return KINETIC_STATUS_SUCCESS;
 }
 
 KineticStatus KineticSocket_WriteProtobuf(int socket, KineticPDU* pdu)
 {
     assert(pdu != NULL);
+#ifdef DEBUG
     LOGF("Writing protobuf (%zd bytes)...", pdu->header.protobufLength);
+#endif
     size_t len = KineticProto__pack(&pdu->protoData.message.proto,
                                     pdu->protobufRaw);
     assert(len == pdu->header.protobufLength);
@@ -244,7 +254,9 @@ void * send_thread(void *arg)
 				LOGF("send thread wakeup with no event %d %s", count, strerror(errno));
 				continue;
 			}
+#ifdef DEBUG
 			LOGF("send thread wakeup with  event count ==%d", count);
+#endif
 			assert (count >= 0 && count <= EPOLL_EVENT_MAX);
 			for (i = 0; i < count; i++){
 				if (events[i].data.fd == connection->send_fd)
@@ -256,11 +268,9 @@ void * send_thread(void *arg)
 					op = kinetic_list_first_entry(&connection->pending_op_list,
 						KineticOperation, list);
 					assert(op);
-					LOGF("sending Op %p", op);
 					kinetic_list_del(&op->list);
 					pthread_mutex_unlock(&connection->pending_op_mutex);
 					pthread_mutex_lock(&connection->inprogress_op_mutex);
-					LOGF("moving to inprogress Op %p", op);
 					kinetic_list_add_tail(&op->list, &connection->inprogress_op_list);
 					pthread_mutex_unlock(&connection->inprogress_op_mutex);
 					KineticStatus Status = KineticPDU_Send(&op->request);

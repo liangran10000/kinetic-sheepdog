@@ -40,9 +40,11 @@ static void KineticOperation_ValidateOperation(KineticOperation* operation)
 KineticOperation *KineticOperation_Create(KineticConnection* const connection,
     				KineticProto_MessageType msg_type)
 {
+#ifdef DEBUG
     LOGF("\n"
          "--------------------------------------------------\n"
          "Building new operation on connection @ 0x%llX", connection);
+#endif
     KineticOperation* operation = KineticAllocator_NewOperation(connection);
 
 
@@ -56,6 +58,7 @@ KineticOperation *KineticOperation_Create(KineticConnection* const connection,
 	KineticPDU_InitWithMessage(&operation->request, connection, msg_type);
     operation->request.proto = &(operation->request.protoData.message.proto);
     KineticPDU_Init(&operation->response, connection);
+    operation->msgType = msg_type;
 
     return operation;
 }
@@ -79,7 +82,7 @@ KineticStatus KineticOperation_GetStatus(KineticOperation* operation)
 void KineticOperation_BuildNoop(KineticOperation* const operation)
 {
     KineticOperation_ValidateOperation(operation);
-
+    operation->userData = NULL;
     operation->request.proto->command->header->messageType = KINETIC_PROTO_MESSAGE_TYPE_NOOP;
     operation->request.proto->command->header->has_messageType = true;
     operation->request.value = BYTE_BUFFER_NONE;
@@ -90,6 +93,7 @@ void KineticOperation_BuildPut(KineticOperation* const operation,
                                KineticEntry* const entry)
 {
     KineticOperation_ValidateOperation(operation);
+    operation->userData = entry;
     operation->request.proto->command->header->messageType = KINETIC_PROTO_MESSAGE_TYPE_PUT;
     operation->request.proto->command->header->has_messageType = true;
     operation->request.value = entry->value;
@@ -106,26 +110,25 @@ void KineticOperation_BuildGet(KineticOperation* const operation,
                                KineticEntry* const entry)
 {
     KineticOperation_ValidateOperation(operation);
+    operation->userData = entry;
     operation->request.proto->command->header->messageType = KINETIC_PROTO_MESSAGE_TYPE_GET;
     operation->request.proto->command->header->has_messageType = true;
     operation->request.value = entry->value;
-    operation->response.value = entry->value;
 
     KineticMessage_ConfigureKeyValue(&(operation->request.protoData.message), entry);
 
     operation->request.value = BYTE_BUFFER_NONE;
-    operation->response.value = BYTE_BUFFER_NONE;
-    if (!entry->metadataOnly)
-    	operation->response.value = entry->value;
-    else
+    if (entry->metadataOnly)
     	operation->response.value = BYTE_BUFFER_NONE;
+    else
+    	operation->response.value = entry->value;
 }
 
 void KineticOperation_BuildDelete(KineticOperation* const operation,
                                   KineticEntry* const entry)
 {
     KineticOperation_ValidateOperation(operation);
-
+    operation->userData = entry;
     operation->request.proto->command->header->messageType = KINETIC_PROTO_MESSAGE_TYPE_DELETE;
     operation->request.proto->command->header->has_messageType = true;
     operation->request.value = entry->value;
@@ -141,7 +144,7 @@ void KineticOperation_BuildGetRange(KineticOperation* const operation,
                                KineticRange* const range)
 {
     KineticOperation_ValidateOperation(operation);
-
+    operation->userData = range;
     operation->request.proto->command->header->messageType = KINETIC_PROTO_MESSAGE_TYPE_GETKEYRANGE;
     operation->request.proto->command->header->has_messageType = true;
     //operation->request->value = range->value;

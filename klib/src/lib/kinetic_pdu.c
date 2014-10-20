@@ -53,8 +53,9 @@ KineticStatus KineticPDU_Send(KineticPDU* request)
 {
     assert(request != NULL);
     assert(request->connection != NULL);
+#ifdef DEBUG
     LOGF("Attempting to send PDU via fd=%d", request->connection->socket);
-
+#endif
     KineticStatus status = KINETIC_STATUS_INVALID;
 
     // Populate the HMAC for the protobuf
@@ -149,7 +150,7 @@ KineticStatus KineticPDU_Receive(KineticConnection* const connection)
     status = KineticSocket_ReadProtobuf(fd, response);
     if (status != KINETIC_STATUS_SUCCESS) {
         LOG("Failed to receive PDU protobuf message!");
-        return status;
+        //return status;
     }
 #ifdef DEBUG
     else {
@@ -167,7 +168,7 @@ KineticStatus KineticPDU_Receive(KineticConnection* const connection)
         msg->proto.command = &msg->command;
         msg->command.status = &msg->status;
         msg->status.code = KINETIC_PROTO_STATUS_STATUS_CODE_DATA_ERROR;
-        return KINETIC_STATUS_DATA_ERROR;
+        status =  KINETIC_STATUS_DATA_ERROR;
     }
 #ifdef DEBUG
     else {
@@ -179,7 +180,6 @@ KineticStatus KineticPDU_Receive(KineticConnection* const connection)
      assert(!kinetic_list_empty(&connection->inprogress_op_list));
      KineticOperation *op;
      kinetic_list_for_each_entry(op, &connection->inprogress_op_list, list) {
-		LOGF("compaing op:%p", op);
 		assert(response->proto->command->header->has_ackSequence);
         if (op->request.protoData.message.header.sequence ==
         		response->proto->command->header->ackSequence) {
@@ -191,7 +191,7 @@ KineticStatus KineticPDU_Receive(KineticConnection* const connection)
      pthread_mutex_unlock(&connection->inprogress_op_mutex);
 	 assert(found == true);
     // Receive the value payload, if specified
-    if (op->response.header.valueLength > 0) {
+    if (response->header.valueLength > 0) {
         assert(op->response.value.array.data != NULL);
 #ifdef  DEBUG
         LOGF("Receiving value payload (%lld bytes)...",
@@ -202,13 +202,14 @@ KineticStatus KineticPDU_Receive(KineticConnection* const connection)
             &op->response.value, response->header.valueLength);
         if (status != KINETIC_STATUS_SUCCESS) {
             LOG("Failed to receive PDU value payload!");
-            return status;
+            //return status;
         }
 #ifdef DEBUG
         else {
             LOG("Received value payload successfully");
         }
-
+#endif
+#ifdef DEBUG_BUFFER
         KineticLogger_LogByteBuffer("Value Buffer", op->response.value);
 #endif
     }
