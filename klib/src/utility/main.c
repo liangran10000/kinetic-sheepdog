@@ -82,11 +82,9 @@ int main(int argc, char** argv)
     }
 
     // Execute all specified operations in order
-    for (optionIndex = 1; optionIndex < argc; optionIndex++) {
-        const char* operation = argv[optionIndex];
-        ReportOperationConfiguration(operation, &SessionConfig, &Entry);
-        ExecuteOperation(operation, sessionHandle, &Entry);
-    }
+      const char* operation = argv[argc-1];
+      ReportOperationConfiguration(operation, &SessionConfig, &Entry);
+      ExecuteOperation(operation, sessionHandle, &Entry);
 
     // Shutdown the Kinetic Device session
     KineticClient_Disconnect(&sessionHandle);
@@ -108,7 +106,7 @@ void * put_callback(KineticStatus status, KineticEntry *entry)
 		gettimeofday(&end, NULL);
 		perf = (end.tv_sec - start.tv_sec);
 		perf = REQ_LIMIT/perf;
-		printf("\n ==== PUT PERFORMANC IN MB/SEC..... %ld\n", perf);
+		printf("\n ==== PUT PERFORMANCE IN MB/SEC..... %ld\n", perf);
 	}
 
 	return entry;
@@ -127,7 +125,7 @@ void * get_callback(KineticStatus status, KineticEntry *entry)
 		gettimeofday(&end, NULL);
 		perf = (end.tv_sec - start.tv_sec);
 		perf = REQ_LIMIT/perf;
-		printf("\n ==== PUT PERFORMANC IN MB/SEC..... %ld\n", perf);
+		printf("\n ==== GET PERFORMANCE IN MB/SEC..... %ld\n", perf);
 	}
 
 	return entry;
@@ -148,13 +146,15 @@ KineticStatus ExecuteOperation(
     }
 
     else if (strcmp("put", operation) == 0) {
-    	entry->callback = NULL;
-    	entry->force = true;
-        status = KineticClient_Put(sessionHandle, entry);
-        if (status == KINETIC_STATUS_SUCCESS) {
-            printf("\nPut operation completed successfully."
+		for (i = 0; i < 2; i++) {
+    		entry->callback = NULL;
+    		entry->force = true;
+        	status = KineticClient_Put(sessionHandle, entry);
+        	if (status == KINETIC_STATUS_SUCCESS) {
+            	printf("\nPut operation completed successfully."
                    " Your data has been stored!\n\n");
-        }
+        	}
+		}
     }
 	
     else if (strcmp("put-rate", operation) == 0) {
@@ -318,16 +318,14 @@ void ReportOperationConfiguration(
            "  non-blocking: %s\n"
            "  clusterVersion: %lld\n"
            "  identity: %lld\n"
-           "  key: %zd bytes\n"
-           "  value: %zd bytes\n",
+           "  key: %zd bytes\n",
            operation,
            config->host,
            config->port,
            config->nonBlocking ? "true" : "false",
            (long long int)config->clusterVersion,
            (long long int)config->identity,
-           entry->key.bytesUsed,
-           entry->value.bytesUsed);
+           entry->key.bytesUsed);
 }
 
 void ParseOptions(
@@ -352,7 +350,7 @@ void ParseOptions(
     } cfg = {
         .host = "localhost",
         .port = KINETIC_PORT,
-        .nonBlocking = false,
+        .nonBlocking = true,
         .useTls = false,
         .clusterVersion = 0,
         .identity = 1,
