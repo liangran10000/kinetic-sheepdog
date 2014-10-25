@@ -11,7 +11,8 @@ PUB_INC = ./include
 CC ?= gcc
 OPTIMIZE = -O3
 WARN = -Wall -Wextra -pedantic
-CDEFS += -D_POSIX_C_SOURCE=1 -D_C99_SOURCE=1 -D DEBUG
+# CDEFS += -D_POSIX_C_SOURCE=1 -D_C99_SOURCE=1 -D DEBUG
+CDEFS += -D_POSIX_C_SOURCE=1 -D_C99_SOURCE=1 
 CFLAGS += -std=c99 -fPIC -g $(WARN) $(CDEFS) $(OPTIMIZE)
 LDFLAGS += -lm -l crypto -l ssl
 
@@ -37,7 +38,7 @@ KINETIC_LIB_OTHER_DEPS = Makefile Rakefile $(VERSION_FILE)
 
 default: $(KINETIC_LIB)
 
-all:  default
+all:  default utility
 
 ci: uninstall all install
 	@echo
@@ -159,7 +160,7 @@ uninstall:
 # Test Utility Build Support
 #===============================================================================
 
-UTILITY = kinetic-c-util
+UTILITY = main
 UTIL_DIR = ./src/utility
 UTIL_EXEC = $(BIN_DIR)/$(UTILITY)
 UTIL_OBJ = $(OUT_DIR)/main.o

@@ -527,7 +527,7 @@ static int gateway_forward_request(struct request *req)
 		hdr.obj.copy_policy = req->rq.obj.copy_policy;
 		/* FIXME should be req specific not the shole gateway */
 		if ( (sys->store & STORE_FLAG_KINETIC))
-			ret = send_kinetic_req(nid, &hdr, reqs[i].buf, wlen,
+			ret = kinetic_send_req(nid, &hdr, reqs[i].buf, wlen,
 					req->rq.epoch, MAX_RETRY_COUNT);
 		else
 			ret = send_req(sfd->fd, &hdr, reqs[i].buf, wlen,
@@ -543,7 +543,8 @@ static int gateway_forward_request(struct request *req)
 
 	sd_debug("nr_sent %d, err %x", fi.nr_sent, err_ret);
 	if (fi.nr_sent > 0) {
-		ret = wait_forward_request(&fi, req);
+		if (!(sys->store & STORE_FLAG_KINETIC))
+			ret = wait_forward_request(&fi, req);
 		if (ret != SD_RES_SUCCESS)
 			err_ret = ret;
 	}

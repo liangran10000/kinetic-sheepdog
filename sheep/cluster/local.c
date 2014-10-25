@@ -215,7 +215,7 @@ static void shm_queue_remove(struct local_event *ev)
 
 static void shm_queue_notify(void)
 {
-	int i;
+	int i, rc;
 	size_t nr;
 	struct local_node lnodes[LOCAL_MAX_NODES];
 
@@ -223,7 +223,8 @@ static void shm_queue_notify(void)
 
 	for (i = 0; i < nr; i++) {
 		sd_debug("send signal to %s", lnode_to_str(lnodes + i));
-		kill(lnodes[i].pid, SIGUSR1);
+		rc = kill(lnodes[i].pid, SIGUSR1);
+		sd_debug("send_signal rc:%d errno:%s", rc, strerror(errno));
 	}
 }
 
@@ -517,6 +518,7 @@ static void local_handler(int listen_fd, int events, void *data)
 	struct signalfd_siginfo siginfo;
 	int ret;
 
+	sd_debug("local handler called entered");
 	if (events & EPOLLHUP) {
 		sd_err("local driver received EPOLLHUP event, exiting.");
 		log_close();
@@ -535,6 +537,7 @@ static void local_handler(int listen_fd, int events, void *data)
 		;
 
 	shm_queue_unlock();
+	sd_debug("local_handler exit");
 }
 
 static int local_get_local_addr(uint8_t *myaddr)
@@ -613,9 +616,12 @@ static int local_init(const char *option)
 
 	shm_queue_init();
 
-	sigemptyset(&mask);
-	sigaddset(&mask, SIGUSR1);
-	sigprocmask(SIG_BLOCK, &mask, NULL);
+	ret =  sigemptyset(&mask);
+	sd_debug("sigempty rc:%d error:%s", ret, strerror(errno));
+	ret = sigaddset(&mask, SIGUSR1);
+	sd_debug("sigadd rc:%d error:%s", ret, strerror(errno));
+	ret = sigprocmask(SIG_BLOCK, &mask, NULL);
+	sd_debug("sigmask rc:%d error:%s", ret, strerror(errno));
 
 	sigfd = signalfd(-1, &mask, SFD_NONBLOCK);
 	if (sigfd < 0) {

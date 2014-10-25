@@ -870,6 +870,7 @@ int main(int argc, char **argv)
 	ret = init_event(EPOLL_SIZE);
 	if (ret)
 		goto cleanup_log;
+
 	if(sys->store & STORE_FLAG_KINETIC)
 		ret = kinetic_init_config_file(dir, argp);
 	else
@@ -899,6 +900,7 @@ int main(int argc, char **argv)
 	if (ret)
 		goto cleanup_log;
 
+	sd_debug("creating cluster");
 	ret = create_cluster(port, zone, nr_vnodes, explicit_addr);
 	if (ret) {
 		sd_err("failed to create sheepdog cluster");
@@ -970,6 +972,7 @@ int main(int argc, char **argv)
 	check_host_env();
 	sd_info("sheepdog daemon (version %s) started", PACKAGE_VERSION);
 
+	sd_debug("entering wait loop");
 	while (sys->nr_outstanding_reqs != 0 ||
 	       (sys->cinfo.status != SD_STATUS_KILLED &&
 		sys->cinfo.status != SD_STATUS_SHUTDOWN))

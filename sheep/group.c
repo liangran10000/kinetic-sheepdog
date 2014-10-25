@@ -284,8 +284,8 @@ drop:
 main_fn bool sd_block_handler(const struct sd_node *sender)
 {
 	struct request *req;
-
-	if (!node_is_local(sender))
+	/* FIXME need to support non local nodes */
+	if ((!(sys->store & STORE_FLAG_KINETIC))  && (!node_is_local(sender)) )
 		return false;
 	if (cluster_op_running)
 		return false;
@@ -862,8 +862,9 @@ static void update_cluster_info(const struct cluster_info *cinfo,
 	}
 
 	sockfd_cache_add(&joined->nid);
-
-	get_vdis(nroot, joined);
+	/* FIXME vdi list should be built in kinetic driver */
+	if (!(sys->store & STORE_FLAG_KINETIC) )
+		get_vdis(nroot, joined);
 
 	if (cinfo->status == SD_STATUS_OK) {
 		if (!is_cluster_formatted())
@@ -911,7 +912,8 @@ main_fn void sd_notify_handler(const struct sd_node *sender, void *data,
 	sd_debug("op %s, size: %zu, from: %s", op_name(op), data_len,
 		 node_to_str(sender));
 
-	if (node_is_local(sender)) {
+	/* FIXME we need to address req from remote node */
+	if ((sys->store & STORE_FLAG_KINETIC) ||  (node_is_local(sender))) {
 		if (has_process_work(op))
 			req = list_first_entry(
 				main_thread_get(pending_block_list),
