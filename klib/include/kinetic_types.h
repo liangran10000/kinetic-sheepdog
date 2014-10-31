@@ -158,8 +158,24 @@ typedef enum {
 	KINETIC_STATUS_PENDING				// request is in progress
 } KineticStatus;
 extern const char* KineticStatusDescriptor[];
+typedef struct  _KineticAddr{
+		char		ipaddr[16];
+		uint32_t	port;
+}KineticAddr;
+
+
+typedef enum _DriveStatus {
+		DRIVE_ADDED = 0x01,
+		DRIVE_REMOVED = 0x02
+}DriveStatus;
+#define KINETIC_DRIVE_ADDRESSES 2
+typedef struct _Heartbeat{
+			KineticAddr			addr[KINETIC_DRIVE_ADDRESSES];
+			DriveStatus 		status;
+}Heartbeat;
 
 typedef  void (*KineticCallback)(KineticStatus, void *);
+typedef  void (*KineticHeartbeatCallback)(Heartbeat *hb);
 // KineticEntry - byte arrays need to be preallocated by the client
 typedef struct _KineticEntry {
 	KineticCallback	callback;

@@ -20,6 +20,7 @@
 #define  KINETIC_HEARTBEAT_SIZE 1024
 #define  KINETIC_IPV4_TAG "ipv4_addr"
 #define  KINETIC_IPV6_TAG "ipv6_addr"
+#define  KINETIC_IP_PORT 	"port"
 #define  KINETIC_UUID_TAG "world_wide_name"
 
 typedef struct uuid_entry {

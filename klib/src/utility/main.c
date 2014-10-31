@@ -18,11 +18,12 @@
 *
 */
 
-#include "kinetic_client.h"
 #include <stdio.h>
 #include <getopt.h>
 #include <stdlib.h>
 #include <sys/time.h>
+#include <unistd.h>
+#include "kinetic_client.h"
 #define  PENDING_LIMIT 20
 #define  REQ_LIMIT		1000
 static int pending_counts = 0;
@@ -64,6 +65,21 @@ static uint8_t VersionData[32];
 static uint8_t ValueData[PDU_VALUE_MAX_LEN];
 static const char* TestDataString = "lorem ipsum... blah blah blah... etc.";
 
+const char * HBStatus2Str(DriveStatus status)
+{
+	if (status == DRIVE_ADDED) return "adding";
+	else if (status == DRIVE_REMOVED) return "removing";
+	else return "unknown operation";
+
+}
+void HeartbeatCallback(Heartbeat *hb)
+{
+
+	printf("\nreceiving heartbeat for %s from %s:%s\n", 
+	HBStatus2Str(hb->status), hb->addr[0].ipaddr, hb->addr[1].ipaddr); 
+
+
+}
 
 int main(int argc, char** argv)
 {
@@ -72,7 +88,8 @@ int main(int argc, char** argv)
     ParseOptions(argc, argv, &SessionConfig, &Entry);
 
     // Establish a session/connection with the Kinetic Device
-	KineticClient_Init(NULL, 0);
+	KineticClient_Init(NULL, 0, HeartbeatCallback);
+	pause();
     KineticSessionHandle sessionHandle;
     KineticStatus status = KineticClient_Connect(&SessionConfig, &sessionHandle);
     if (status != KINETIC_STATUS_SUCCESS) {
@@ -261,6 +278,11 @@ KineticStatus ExecuteOperation(
         }
     }
 
+    else if (strcmp("pause", operation) == 0) {
+        printf("\n waiting for heartbeat\n");
+		pause();
+		return -1;
+	}
     else {
         printf("\nSpecified operation '%s' is invalid!\n", operation);
         return -1;

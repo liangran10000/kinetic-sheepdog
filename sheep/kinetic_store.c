@@ -103,9 +103,8 @@ static struct sheepdog_config {
 #define sector_algined(x) ({ ((x) & (SECTOR_SIZE - 1)) == 0; })
 static void make_kinetic_req(struct kinetic_drive *drv, struct kinetic_req *req,
 						uint32_t len, uint8_t *buf, KineticCallback callback);
-
 int kinetic_write_config(const char *buf, size_t len, bool force_create);
-
+static void * kinetic_hb_callback(Heartbeat *hb);
 
 static uint32_t object2epoch(uint8_t *buf)
 {
@@ -1129,6 +1128,21 @@ int kinetic_check_path_len(const char *path)
 	}
 	return 0;
 }
+
+static const char * HBStatus2Str(DriveStatus status)
+{
+	if (status == DRIVE_ADDED) return "adding";
+	else if (status == DRIVE_REMOVED) return "removing";
+	else return "unknown operation";
+
+}
+static void * kinetic_hb_callback(Heartbeat *hb)
+{
+
+	sd_debug("receiving heartbeat for %s from %s:%s", 
+	HBStatus2Str(hb->status), hb->addr[0].ipaddr, hb->addr[1].ipaddr); 
+	return NULL;
+}
 static bool kinetic_add_disk(char *path, bool flag)
 {
 	static uint32_t disk_index = 0;
@@ -1279,7 +1293,7 @@ int kinetic_init_global_pathnames(const char *d, char *argp)
 #define KINETIC_LOG_FILE 		"kinetic.log"
 
 	/* initialize kinetic */
-	KineticClient_Init(NULL, 0);
+	KineticClient_Init(NULL, 0, (KineticHeartbeatCallback)kinetic_hb_callback);
 
 	if (kinetic_init_obj_path(argp) || kinetic_init_epoch_path(d, argp) ||
 		kinetic_init_config_path(d, argp)) {
@@ -1313,7 +1327,7 @@ int kinetic_send_req(const struct node_id *node, struct sd_req *hdr, void *data,
 	const char addr[32];
 	struct kinetic_req *req = alloc_req();
 	int ret;
-	sprintf(addr, "%s:%d", node->kinetic_addr, node->kinetic_port);
+	sprintf((char *)addr, "%s:%d", node->kinetic_addr, node->kinetic_port);
 	drv = addr2drv(addr);
 	if (drv == NULL) return  SD_RES_NETWORK_ERROR;
 	switch(hdr->opcode) {

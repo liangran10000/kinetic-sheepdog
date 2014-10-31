@@ -104,7 +104,7 @@ KineticStatus KineticClient_Delete(KineticSessionHandle handle,
  * @return              Returns the resulting KineticStatus
  */
 
-KineticStatus KineticClient_Init(const char *logFile, int logLevel);
+KineticStatus KineticClient_Init(const char *logFile, int logLevel, KineticHeartbeatCallback callback);
 
 /**
  * @brief Deinitializes a previously Kinetic Client library and logger
