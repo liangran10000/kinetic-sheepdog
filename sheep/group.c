@@ -913,7 +913,7 @@ main_fn void sd_notify_handler(const struct sd_node *sender, void *data,
 		 node_to_str(sender));
 
 	/* FIXME we need to address req from remote node */
-	if ((sys->store & STORE_FLAG_KINETIC) ||  (node_is_local(sender))) {
+	if ((node_is_local(sender))) {
 		if (has_process_work(op))
 			req = list_first_entry(
 				main_thread_get(pending_block_list),
@@ -985,29 +985,27 @@ main_fn bool sd_join_handler(const struct sd_node *joining,
 
 	return true;
 }
-
+int kinetic_send_join_request(const char *host, uint16_t port, uint32_t capacity, uint32_t zone)
+{
+	int rc;	
+	struct sd_node *n = &sys->this_node;
+	struct sd_node *node = malloc(sizeof(*node));
+	assert(node);
+	memcpy(node, n , sizeof(*node));
+	node->space = capacity;
+	node->zone   = zone;
+	strncpy((char *)node->nid.io_addr, host, sizeof(node->nid.io_addr));
+	node->nid.io_port = port;
+	if ((rc = sys->cdrv->join(node, &sys->cinfo, sizeof(sys->cinfo))) != SD_RES_SUCCESS)
+		free(node);
+	return rc;
+}
 static int send_join_request(void)
 {
 	struct sd_node *n = &sys->this_node;
 	int ret;
-	void *ref = NULL;
 	sd_info("%s going to join the cluster", node_to_str(n));
-	if (sys->store  & STORE_FLAG_KINETIC) {
-		for (;;) {
-			struct sd_node *node = malloc(sizeof(*node));
-			assert(node);
-			memcpy(node, n , sizeof(*node));
-			ref = kinetic_update_node(node, ref);
-			if (ref) {
-				ret = sys->cdrv->join(node, &sys->cinfo, sizeof(sys->cinfo));
-				if (ret == SD_RES_SUCCESS) continue;
-			}
-			free(node);
-			break;
-		}
-	}
-	else
-		ret = sys->cdrv->join(n, &sys->cinfo, sizeof(sys->cinfo));
+	ret = sys->cdrv->join(n, &sys->cinfo, sizeof(sys->cinfo));
 	return ret;
 }
 
@@ -1267,7 +1265,7 @@ int create_cluster(int port, int64_t zone, int nr_vnodes,
 
 	update_node_disks();
 
-	if(sys->store & STORE_FLAG_KINETIC) 
+	if((!sys->gateway_only) && (sys->store & STORE_FLAG_KINETIC)) 
 		sys->cinfo.epoch = kinetic_get_latest_epoch();
 	else
 		sys->cinfo.epoch = get_latest_epoch();

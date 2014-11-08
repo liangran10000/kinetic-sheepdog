@@ -871,7 +871,7 @@ int main(int argc, char **argv)
 	if (ret)
 		goto cleanup_log;
 
-	if(sys->store & STORE_FLAG_KINETIC)
+	if(argp && sys->store & STORE_FLAG_KINETIC)
 		ret = kinetic_init_config_file(dir, argp);
 	else
 		ret = init_config_file();

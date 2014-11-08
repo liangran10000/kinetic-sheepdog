@@ -61,6 +61,7 @@ struct kinetic_req {
 
 typedef struct kinetic_req kinetic_req_t;
 
+
 struct kinetic_drive {
 #define DEFAULT_DRIVE 0x0001
 	uint32_t		flags;
@@ -81,8 +82,6 @@ struct kinetic_drive {
 	struct list_head	req_list;
 	uint32_t			index;
 	};
-
-
 typedef struct kinetic_drive kinetic_drive_t;
 LIST_HEAD(drives);
  
@@ -533,6 +532,8 @@ int kinetic_init(void)
 	ret = for_each_obj_path(make_stale_dir);
 	if (ret != SD_RES_SUCCESS)
 		return ret;
+	/* FIXME */
+	return SD_RES_SUCCESS;
 	for_each_object_in_stale(init_objlist_and_vdi_bitmap, NULL);
 
 	return for_each_object_in_wd(init_objlist_and_vdi_bitmap, true, NULL);
@@ -1136,42 +1137,21 @@ static const char * HBStatus2Str(DriveStatus status)
 	else return "unknown operation";
 
 }
-static void * kinetic_hb_callback(Heartbeat *hb)
+static struct kinetic_drive *drv_connect(const char *host, uint16_t port, bool flag)
 {
-
-	sd_debug("receiving heartbeat for %s from %s:%s", 
-	HBStatus2Str(hb->status), hb->addr[0].ipaddr, hb->addr[1].ipaddr); 
-	return NULL;
-}
-static bool kinetic_add_disk(char *path, bool flag)
-{
-	static uint32_t disk_index = 0;
-	char *host, *port, *ptrs, buf[PATH_MAX];
-
 	struct kinetic_drive *drv = malloc(sizeof(*drv));
 	if(drv == NULL) {
 		sd_err("allocation of disk memory  failed");
-		return false;
+		return NULL;
 	}
+	assert(strlen(host) + 8 < sizeof(drv->base_path));
 	memset(drv, 0x00, sizeof(*drv));
 	if (flag)
 			drv->flags |= DEFAULT_DRIVE;
 	INIT_LIST_NODE(&drv->list);
-	strncpy(buf, path, sizeof(buf));
-	host = strtok_r(buf, ":", &ptrs);
-	if (host == NULL) {
-		sd_err("invalid drive ip address");
-		return false;
-	}
-	port = strtok_r(NULL, ":", &ptrs);
-	if (port == NULL) {
-		sd_err("invalid drive ip address");
-		return false;
-	}
 	strncpy(drv->conn.host, host, sizeof(drv->conn.host));
-	strncpy(drv->base_path, path, sizeof(drv->base_path));
-	drv->index = disk_index++;
-	drv->conn.port = atoi(port);
+	sprintf(drv->base_path, "%s:%d", host, port);
+	drv->conn.port = port;
 	drv->conn.nonBlocking = false;
 	drv->conn.clusterVersion = KINETIC_CLUSTER_VERSION;
 	strncpy(drv->hmacBuf, KINETIC_HMAC, sizeof(drv->hmacBuf));
@@ -1183,13 +1163,63 @@ static bool kinetic_add_disk(char *path, bool flag)
 			&drv->handle)) != KINETIC_STATUS_SUCCESS) {
 			sd_err("kinetic client connetion operation failed for"
 			"IP:%s Port:%d ", drv->conn.host, drv->conn.port);
-		return SD_RES_NETWORK_ERROR;                                                                                              
+			goto kinetic_drive_error_exit;
 	}                                                          
 
 	list_add_tail(&drv->list, &drives);
-	return SD_RES_SUCCESS;
+	return drv;
+kinetic_drive_error_exit:
+ 	if (drv) free (drv);
+	return NULL;
 }
 
+static kinetic_drive_t * kinetic_add_disk(char *path, bool flag)
+{
+	char *host, *port, *ptrs, buf[PATH_MAX];
+
+	strncpy(buf, path, sizeof(buf));
+	host = strtok_r(buf, ":", &ptrs);
+	if (host == NULL) {
+		sd_err("invalid drive ip address");
+		return NULL;
+	}
+	port = strtok_r(NULL, ":", &ptrs);
+	if (port == NULL) {
+		sd_err("invalid drive ip address");
+		return NULL;
+	}
+	if (flag){ 
+			strncpy((char *)(sys->this_node.nid.io_addr), host, sizeof(sys->this_node.nid.io_addr));
+			sys->this_node.nid.io_port =  atoi(port);
+	}
+	return (drv_connect(host, atoi(port), flag));
+}
+
+
+static void * kinetic_hb_callback(Heartbeat *hb)
+{
+	bool found = false;
+	kinetic_drive_t *drv;
+	return NULL;
+	sd_debug("FIXME::ignoring  heartbeat %s from %s:%s...........", 
+	HBStatus2Str(hb->status), hb->addr[0].ipaddr, hb->addr[1].ipaddr); 
+	list_for_each_entry(drv, &drives, list) {
+		if ((!strncmp(drv->conn.host, hb->addr[0].ipaddr, sizeof(drv->conn.host)) && 
+				drv->conn.port == hb->addr[0].port) || 
+			(!strncmp(drv->conn.host, hb->addr[1].ipaddr, sizeof(drv->conn.host)) && 
+				drv->conn.port == hb->addr[1].port) ){
+					found = true;
+					break;
+		}
+	}
+	if (!found) {
+		char path[32];
+		sprintf(path, "%s:%04d", hb->addr[0].ipaddr, hb->addr[0].port);
+		drv = kinetic_add_disk(path, false);
+		kinetic_send_join_request(drv->conn.host, drv->conn.port, drv->capacity, drv->zone);
+	}
+	return NULL;
+}
 static int is_kinetic_meta_store(const char *path)
 {
 	char conf[PATH_MAX];
@@ -1218,7 +1248,7 @@ int kinetic_init_obj_path(char *drive)
 		 * it. This is helpful to upgrade old sheep cluster to
 		 * the MD-enabled.
 		 */
-		if (kinetic_add_disk(drive, true) != SD_RES_SUCCESS)
+		if (kinetic_add_disk(drive, true) == NULL)
 			return -1;
 		md_add_disk(drive, false);
 	} else {
@@ -1227,7 +1257,7 @@ int kinetic_init_obj_path(char *drive)
 				sd_err("%s is meta-store, abort", p);
 				return -1;
 			}
-			if(kinetic_add_disk(p, true) != SD_RES_SUCCESS)
+			if(kinetic_add_disk(p, true) == NULL)
 				return -1;
 			md_add_disk(p, false);
 		} while ((p = strtok(NULL, ",")));
@@ -1293,16 +1323,17 @@ int kinetic_init_global_pathnames(const char *d, char *argp)
 #define KINETIC_LOG_FILE 		"kinetic.log"
 
 	/* initialize kinetic */
-	KineticClient_Init(NULL, 0, (KineticHeartbeatCallback)kinetic_hb_callback);
-
-	if (kinetic_init_obj_path(argp) || kinetic_init_epoch_path(d, argp) ||
-		kinetic_init_config_path(d, argp)) {
-		KineticClient_DeInit();
-		return -1;
-	}
+	KineticStatus status = KineticClient_Init(NULL, 0, (KineticHeartbeatCallback)kinetic_hb_callback);
+	if (status != KINETIC_STATUS_SUCCESS)  return -1;
+	if (argp)
+		if (kinetic_init_obj_path(argp) || kinetic_init_epoch_path(d, argp) ||
+			kinetic_init_config_path(d, argp)) {
+			KineticClient_DeInit();
+			return -1;
+		}
 	return 0;
 }
-
+/*
 uint32_t kinetic_update_node(struct sd_node *node, uint32_t ref)
 {
 	kinetic_drive_t *drv;
@@ -1310,26 +1341,32 @@ uint32_t kinetic_update_node(struct sd_node *node, uint32_t ref)
 		if (ref == drv->index) {
 			node->space = drv->capacity;
 			node->zone   = drv->zone;
-			memcpy(node->nid.kinetic_addr, drv->conn.host,
-				sizeof(node->nid.kinetic_addr));
-			node->nid.kinetic_port = drv->conn.port;
+			memcpy(node->nid.io_addr, drv->conn.host,
+				sizeof(node->nid.io_addr));
+			node->nid.io_port = drv->conn.port;
 			return ++ref;
 		}
 
 	}
 	return 0;
 }
-
-int kinetic_send_req(const struct node_id *node, struct sd_req *hdr, void *data,  uint32_t epoch, uint32_t retries)
+*/
+int kinetic_send_req(const struct node_id *node, struct sd_req *hdr, void *data,  unsigned datalen, uint32_t epoch, uint32_t retries)
 {
 		// find the drive id */
 	kinetic_drive_t *drv;
 	const char addr[32];
 	struct kinetic_req *req = alloc_req();
 	int ret;
-	sprintf((char *)addr, "%s:%d", node->kinetic_addr, node->kinetic_port);
+	if (req == NULL) return SD_RES_NO_MEM;
+	sprintf((char *)addr, "%s:%d", node->io_addr, node->io_port);
 	drv = addr2drv(addr);
-	if (drv == NULL) return  SD_RES_NETWORK_ERROR;
+	if (drv == NULL) {
+			if ((drv = drv_connect((const char *)node->io_addr, node->io_port, false)) == NULL) {
+				free_req(req);
+				return  SD_RES_NETWORK_ERROR;
+			}
+	}
 	switch(hdr->opcode) {
 			case SD_OP_WRITE_PEER:
 			case SD_OP_CREATE_AND_WRITE_PEER:

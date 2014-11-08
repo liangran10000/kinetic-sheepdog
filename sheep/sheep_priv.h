@@ -609,5 +609,6 @@ static inline int nfs_init(const char *options)
 	return 0;
 }
 #endif
+int kinetic_send_join_request(const char *host, uint16_t port, uint32_t capacity, uint32_t zone);
 
 #endif

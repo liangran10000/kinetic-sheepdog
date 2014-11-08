@@ -10,7 +10,7 @@
  */
 
 #include "sheep_priv.h"
-
+#include "kinetic_store.h"
 #define SD_FORMAT_VERSION 0x0005
 #define SD_CONFIG_SIZE 40
 
@@ -34,7 +34,7 @@ static int write_config(void)
 {
 	int ret;
 
-	if(sys->store & STORE_FLAG_KINETIC)
+	if( (!sys->gateway_only)  && (sys->store & STORE_FLAG_KINETIC))
 		return kinetic_write_config( (char *)&config, sizeof(config),
 			true);
 	ret = atomic_create_and_write(config_path, (char *)&config,

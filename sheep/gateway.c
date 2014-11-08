@@ -11,7 +11,7 @@
  */
 
 #include "sheep_priv.h"
-
+#include "kinetic_store.h"
 static inline void gateway_init_fwd_hdr(struct sd_req *fwd, struct sd_req *hdr)
 {
 	memcpy(fwd, hdr, sizeof(*fwd));
@@ -469,7 +469,7 @@ forward_info_advance(struct forward_info *fi, const struct node_id *nid,
 
 static int gateway_forward_request(struct request *req)
 {
-	int i, err_ret = SD_RES_SUCCESS, ret;
+	int i, err_ret = SD_RES_SUCCESS, ret = SD_RES_SUCCESS;
 	unsigned wlen;
 	uint64_t oid = req->rq.obj.oid;
 	struct forward_info fi;
@@ -510,41 +510,44 @@ static int gateway_forward_request(struct request *req)
 	}
 
 	for (i = 0; i < nr_to_send; i++) {
-		struct sockfd *sfd;
+		struct sockfd *sfd = NULL;
 		const struct node_id *nid;
 
 		nid = &target_nodes[i]->nid;
-		sfd = sockfd_cache_get(nid);
-		if (!sfd) {
-			err_ret = SD_RES_NETWORK_ERROR;
-			break;
+		if ( !(sys->store & STORE_FLAG_KINETIC)) {
+			sfd = sockfd_cache_get(nid);
+			if (!sfd) {
+				err_ret = SD_RES_NETWORK_ERROR;
+				break;
+			}
 		}
-
 		hdr.data_length = reqs[i].dlen;
 		wlen = reqs[i].wlen;
 		hdr.obj.offset = reqs[i].off;
 		hdr.obj.ec_index = i;
 		hdr.obj.copy_policy = req->rq.obj.copy_policy;
-		/* FIXME should be req specific not the shole gateway */
-		if ( (sys->store & STORE_FLAG_KINETIC))
+		/* FIXME should be req specific not the whole gateway */
+		if ( (sys->store & STORE_FLAG_KINETIC)) {
 			ret = kinetic_send_req(nid, &hdr, reqs[i].buf, wlen,
 					req->rq.epoch, MAX_RETRY_COUNT);
-		else
-			ret = send_req(sfd->fd, &hdr, reqs[i].buf, wlen,
-			       sheep_need_retry, req->rq.epoch, MAX_RETRY_COUNT);
-		if (ret) {
-			sockfd_cache_del_node(nid);
-			err_ret = SD_RES_NETWORK_ERROR;
-			sd_debug("fail %d", ret);
-			break;
+			assert(ret == SD_RES_SUCCESS);
 		}
-		forward_info_advance(&fi, nid, sfd, reqs[i].buf);
+		else {
+				ret = send_req(sfd->fd, &hdr, reqs[i].buf, wlen,
+			       sheep_need_retry, req->rq.epoch, MAX_RETRY_COUNT);
+			if (ret) {
+				sockfd_cache_del_node(nid);
+				err_ret = SD_RES_NETWORK_ERROR;
+				sd_debug("fail %d", ret);
+				break;
+			}
+			forward_info_advance(&fi, nid, sfd, reqs[i].buf);
+		}
 	}
 
 	sd_debug("nr_sent %d, err %x", fi.nr_sent, err_ret);
 	if (fi.nr_sent > 0) {
-		if (!(sys->store & STORE_FLAG_KINETIC))
-			ret = wait_forward_request(&fi, req);
+		ret = wait_forward_request(&fi, req);
 		if (ret != SD_RES_SUCCESS)
 			err_ret = ret;
 	}

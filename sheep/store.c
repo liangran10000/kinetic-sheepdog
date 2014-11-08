@@ -61,7 +61,7 @@ static int do_epoch_log_read(uint32_t epoch, struct sd_node *nodes, int len,
 	struct stat epoch_stat;
 
 	snprintf(path, sizeof(path), "%s%08u", epoch_path, epoch);
-	if(sys->store & STORE_FLAG_KINETIC)
+	if((!sys->gateway_only) && (sys->store & STORE_FLAG_KINETIC))
 		kinetic_do_epoch_log_read(epoch, nodes,len, nr_nodes, timestamp);
 	fd = open(path, O_RDONLY);
 	if (fd < 0) {
@@ -134,7 +134,7 @@ uint32_t get_latest_epoch(void)
 	struct dirent *d;
 	uint32_t e, epoch = 0;
 	char *p;
-	if(sys->store & STORE_FLAG_KINETIC)
+	if((!sys->gateway_only) && (sys->store & STORE_FLAG_KINETIC))
 		return kinetic_get_latest_epoch();
 	dir = opendir(epoch_path);
 	if (!dir)
@@ -233,7 +233,7 @@ static int init_obj_path(const char *base_path, char *argp)
 
 	if (check_path_len(base_path) < 0)
 		return -1;
-	if(sys->store & STORE_FLAG_KINETIC)
+	if( argp && (sys->store & STORE_FLAG_KINETIC))
 				return kinetic_init_obj_path( argp);
 
 #define OBJ_PATH "/obj"
@@ -365,7 +365,7 @@ int init_global_pathnames(const char *d, char *argp)
 {
 	int ret;
 
-	if(sys->store & STORE_FLAG_KINETIC)
+	if(argp && (sys->store & STORE_FLAG_KINETIC))
 				return kinetic_init_global_pathnames(d, argp);
 	ret = init_obj_path(d, argp);
 	if (ret)

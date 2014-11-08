@@ -187,6 +187,9 @@ static inline int oid_cmp(const uint64_t *oid1, const uint64_t *oid2)
 static inline int node_id_cmp(const struct node_id *node1,
 			      const struct node_id *node2)
 {
+	//assert(node1->kinetic_port && node2->kinetic_port);
+	sd_debug("Comparing node %s:%d with %s:%d", node1->addr, node1->port,
+			node2->addr, node2->port);
 	int cmp = memcmp(node1->addr, node2->addr, sizeof(node1->addr));
 	if (cmp != 0)
 		return cmp;
