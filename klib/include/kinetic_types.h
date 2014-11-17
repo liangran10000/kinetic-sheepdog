@@ -174,7 +174,7 @@ typedef struct _Heartbeat{
 			DriveStatus 		status;
 }Heartbeat;
 
-typedef  void (*KineticCallback)(KineticStatus, void *);
+typedef  void (*KineticCallback)(KineticStatus, void *metadata);
 typedef  void (*KineticHeartbeatCallback)(Heartbeat *hb);
 // KineticEntry - byte arrays need to be preallocated by the client
 typedef struct _KineticEntry {

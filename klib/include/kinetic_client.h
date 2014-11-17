@@ -115,5 +115,5 @@ KineticStatus KineticClient_Init(const char *logFile, int logLevel, KineticHeart
 KineticStatus KineticClient_DeInit();
 
 KineticStatus KineticClient_GetRange(KineticSessionHandle handle,
-                                KineticRange *range);
+                                KineticRange *metadata);
 #endif // _KINETIC_CLIENT_H

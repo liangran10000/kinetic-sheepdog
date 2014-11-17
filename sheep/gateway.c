@@ -24,6 +24,7 @@ struct req_iter {
 	uint32_t wlen;
 	uint32_t dlen;
 	uint64_t off;
+	int		 fd;
 };
 
 static struct req_iter *prepare_replication_requests(struct request *req,
@@ -43,6 +44,8 @@ static struct req_iter *prepare_replication_requests(struct request *req,
 		reqs[i].dlen = len;
 		reqs[i].off = off;
 		reqs[i].wlen = len;
+		reqs[i].fd  = eventfd(0, EFD_NONBLOCK); /* FIXME should be allocated form a list */
+		assert(reqs[i].fd != -1);
 	}
 	return reqs;
 }
@@ -234,8 +237,10 @@ static void finish_requests(struct request *req, struct req_iter *reqs,
 		req->rp.data_length = req->rq.data_length;
 		free(buf);
 	}
-	for (i = 0; i < nr_to_send; i++)
+	for (i = 0; i < nr_to_send; i++) {
+		if (reqs[i].fd) close(reqs[i].fd);
 		free(reqs[i].buf);
+	}
 out:
 	free(reqs);
 }
@@ -355,7 +360,67 @@ static inline void pfd_info_init(struct forward_info *fi, struct pfd_info *pi)
 		pi->pfds[i] = fi->ent[i].pfd;
 	pi->nr = fi->nr_sent;
 }
-
+static int wait_forward_kinetic_requests(struct req_iter *reqs, int nr_sent )
+{
+		/* reties will be implemented in kinetic drive *
+		 */
+	struct pfd_info pi;
+	int cmplts = 0;
+	short revents;
+	uint64_t val = 0;
+	int rc = SD_RES_SUCCESS;
+	int i, j, pollret, repeat = MAX_RETRY_COUNT;
+	for (i = 0; i < nr_sent; i++)  {
+			pi.pfds[i].fd = reqs[i].fd;
+			pi.pfds[i].events = POLLIN;
+			pi.pfds[i].revents = 0;
+	}
+	pi.nr = nr_sent;
+	for(;;) {
+		pollret = poll(pi.pfds, pi.nr, 1000 * POLL_TIMEOUT);
+		printf("poll ret == %d\n", pollret);
+		if (pollret < 0) {
+			if (errno == EINTR) continue;
+			panic("%m");
+		}
+	 	else if (pollret == 0) {
+			if(repeat--) {
+				sd_warn("poll timeout %d, disks of some nodes or "
+					"network is busy. Going to poll-wait again", nr_sent);
+				continue;
+			}
+			break;
+		}
+		for (i = 0; i < nr_sent; i++) {
+			revents = pi.pfds[i].revents;
+			pi.pfds[i].revents = 0;
+			if (revents & (POLLERR | POLLHUP | POLLNVAL | POLLIN)) {
+				pi.pfds[i].fd = -1;
+				cmplts++;
+			}
+			if (revents & (POLLERR | POLLHUP | POLLNVAL )) 
+				rc =  SD_RES_NETWORK_ERROR;
+			else if (revents & POLLIN) {
+				read(pi.pfds[i].fd, &val, sizeof(val));
+				val &= (~KINETIC_REQ_CMPLT);
+				if (val != SD_RES_SUCCESS) rc =  SD_RES_NETWORK_ERROR;
+			}
+			if (cmplts >= nr_sent) goto wait_exit;
+		}
+		pi.nr = 0;
+		for (i = 0; i < nr_sent; i++) {
+			if (pi.pfds[i].fd  == -1) 
+			  for (j = i + 1; j < nr_sent; j++)
+					  if (pi.pfds[j].fd != -1)
+							  memmove(&(pi.pfds[i]), &(pi.pfds[j]), sizeof(pi.pfds[0]) * (nr_sent -j)); 
+			
+		}
+		for (i = 0; i < nr_sent; i++) 
+			if (pi.pfds[j].fd != -1) (pi.nr)++;
+	}
+wait_exit:
+	return rc;
+}
 /*
  * Wait for all forward requests completion.
  *
@@ -528,9 +593,10 @@ static int gateway_forward_request(struct request *req)
 		hdr.obj.copy_policy = req->rq.obj.copy_policy;
 		/* FIXME should be req specific not the whole gateway */
 		if ( (sys->store & STORE_FLAG_KINETIC)) {
-			ret = kinetic_send_req(nid, &hdr, reqs[i].buf, wlen,
-					req->rq.epoch, MAX_RETRY_COUNT);
+			ret = kinetic_post_req(nid, &hdr, reqs[i].buf, wlen,
+					req->rq.epoch, MAX_RETRY_COUNT, reqs[i].fd);
 			assert(ret == SD_RES_SUCCESS);
+			(fi.nr_sent)++;
 		}
 		else {
 				ret = send_req(sfd->fd, &hdr, reqs[i].buf, wlen,
@@ -547,7 +613,10 @@ static int gateway_forward_request(struct request *req)
 
 	sd_debug("nr_sent %d, err %x", fi.nr_sent, err_ret);
 	if (fi.nr_sent > 0) {
-		ret = wait_forward_request(&fi, req);
+		if ( (sys->store & STORE_FLAG_KINETIC)) 
+			ret = wait_forward_kinetic_requests(reqs, fi.nr_sent);
+		else
+			ret = wait_forward_request(&fi, req);
 		if (ret != SD_RES_SUCCESS)
 			err_ret = ret;
 	}

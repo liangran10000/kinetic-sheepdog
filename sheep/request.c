@@ -703,7 +703,6 @@ static struct request *alloc_request(struct client_info *ci, int data_length)
 	refcount_set(&req->refcnt, 1);
 
 	uatomic_inc(&sys->nr_outstanding_reqs);
-
 	return req;
 }
 

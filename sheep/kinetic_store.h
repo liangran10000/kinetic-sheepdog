@@ -1,6 +1,8 @@
 #ifndef __KINETIC_STORE_H__
 #define __KINETIC_STORE_H__
 
+#define KINETIC_REQ_CMPLT  (0x10000000)
+
 bool is_kinetic_store(char *store);
 int kinetic_init_global_pathnames(const char *d, char *argp);
 int kinetic_init_config_file(const char *d, char *);
@@ -33,5 +35,6 @@ uint64_t kinetic_init_path_space(const char *path, bool purge);
 int kinetic_remove_epoch(uint32_t epoch);
 uint64_t kinetic_init_path_space(const char *path, bool purge);
 int kinetic_init_global_pathnames(const char *d, char *argp);
-int kinetic_send_req(const struct node_id *node, struct sd_req *hdr, void *data,  unsigned datalen, uint32_t epoch, uint32_t retries);
+int kinetic_post_req(const struct node_id *node, struct sd_req *hdr, void *data,
+	unsigned datalen, uint32_t epoch, uint32_t retriesi, int fd);
 #endif
