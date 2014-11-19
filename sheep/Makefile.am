@@ -53,7 +53,7 @@ AM_CPPFLAGS		+= -DENABLE_TRACE
 sheep_SOURCES		+= trace/trace.c trace/mcount.S trace/graph.c trace/checker.c
 endif
 
-sheep_LDADD	  	= ../lib/libsheepdog.a -lpthread -lm ../klib/bin/libkinetic-c-client.0.6.0-beta-2.a \
+sheep_LDADD	  	= ../lib/libsheepdog.a -lpthread -lm -lkinetic-c-client.0.8.1-beta\
 			  -lcrypto -lssl $(libcpg_LIBS) $(libcfg_LIBS) $(libacrd_LIBS) $(LIBS)
 
 if BUILD_NFS

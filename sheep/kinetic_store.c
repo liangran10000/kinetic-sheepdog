@@ -53,14 +53,17 @@ typedef struct kinetic_tag {
 }kinetic_tag_t;
 
 #define KINETIC_REQ_SIGN  0x12348765
-
+struct kinetic_req;
 typedef struct kinetic_metadata {
+		/* data must be the first element */
+		KineticCompletionData data;
 		KineticEntry entry;
         uint8_t 	oid[KINETIC_OBJECT_NAME_LENGTH];
 		uint8_t		padding[3];
+		struct kinetic_req *req;/* container req for this metadata */
 }kinetic_metadata_t;
 
-typedef struct kinetic_req {
+struct kinetic_req {
 		struct	list_node	list;
 		kinetic_tag_t		tag;
 		uint32_t			seg_posted;
@@ -69,7 +72,8 @@ typedef struct kinetic_req {
 		uint32_t			sign;
 		uint64_t			val;
 		uint8_t				*metadata;
-}kinetic_req_t;
+};
+typedef struct kinetic_req kinetic_req_t;
 
 struct kinetic_drive {
 #define DEFAULT_DRIVE 0x0001
@@ -113,15 +117,18 @@ static struct sheepdog_config {
 #define sector_algined(x) ({ ((x) & (SECTOR_SIZE - 1)) == 0; })
 
 static void make_kinetic_req(kinetic_req_t *req, kinetic_metadata_t *metadata,
-		uint32_t len, uint8_t *buf, KineticCallback callback);
+		uint32_t len, uint8_t *buf);
 int kinetic_write_config(const char *buf, size_t len, bool force_create);
-static void * kinetic_hb_callback(Heartbeat *hb);
 static 	void free_req(kinetic_req_t *req);
+static KineticCompletionCallback	req_cmplt_callback(KineticCompletionData *data, void *pref);
 
-static void	req_cmplt_callback(KineticStatus status, void *pref)
+static KineticCompletionClosure closure = {(KineticCompletionCallback)req_cmplt_callback, NULL}; 
+
+static KineticCompletionCallback	req_cmplt_callback(KineticCompletionData *data, void *pref)
 {
-	KineticEntry *entry = (KineticEntry *)pref;
-	kinetic_req_t *req = entry->reference;
+	kinetic_metadata_t *metadata = (kinetic_metadata_t *)data;
+	kinetic_req_t *req = metadata->req;
+	KineticStatus status = metadata->data.status;
 	assert(req && req->fd && req->sign == KINETIC_REQ_SIGN);
 	req->seg_cmplted++;
 	if (!req->val)
@@ -131,6 +138,7 @@ static void	req_cmplt_callback(KineticStatus status, void *pref)
 		write(req->fd, &req->val, sizeof(req->val));
 		free_req(req);
 	}
+	return NULL;
 }
 
 static uint32_t object2epoch(uint8_t *buf)
@@ -191,8 +199,8 @@ static KineticStatus kinetic_put(struct kinetic_drive *drv,
 	kinetic_req_t *req;
 	kinetic_metadata_t *metadata;
 	uint32_t i, seg_size, segs = len/KINETIC_OBJECT_LIMIT;
+	KineticCompletionClosure *callback = fd < 0 ? NULL : &closure;
 	if (len % KINETIC_OBJECT_LIMIT) segs++;
-	KineticCallback callback = fd < 0 ? (KineticCallback)NULL : req_cmplt_callback;
 
 	req = alloc_req(sizeof(kinetic_metadata_t) * segs);
 	if (req == NULL) return KINETIC_STATUS_MEMORY_ERROR;
@@ -203,13 +211,14 @@ static KineticStatus kinetic_put(struct kinetic_drive *drv,
 	metadata = (kinetic_metadata_t *)req->metadata;
 	req->seg_posted = segs;
 	for (i = 0; i < segs; i ++) {
-		metadata->entry.reference = req;
+		metadata->req = req;
 		oid2object(metadata, oid, i);
 		seg_size =  MIN(len, KINETIC_OBJECT_LIMIT);
-		make_kinetic_req(req, metadata, seg_size, buf, callback);
-		status = KineticClient_Put(drv->handle, &(metadata->entry));
+		make_kinetic_req(req, metadata, seg_size, buf);
+		status = KineticClient_Put(drv->handle, &(metadata->entry), callback);
+
 		/* FIXME upon error disconnect to avoid memory corruption */
-		if ((status  != KINETIC_STATUS_SUCCESS) && (status != KINETIC_STATUS_PENDING)) {
+		if (status  != KINETIC_STATUS_SUCCESS) {
 			sd_err("failed to write object %"PRIx64, oid);
 			break;                                                                                              
 		}
@@ -217,15 +226,14 @@ static KineticStatus kinetic_put(struct kinetic_drive *drv,
 		buf += seg_size;
 		metadata++;
 	}
-	if (status != KINETIC_STATUS_PENDING) 
+	if (( callback   && (status != KINETIC_STATUS_SUCCESS) ) || (callback == NULL)) 
 			free_req(req);
 	return status;
 }
 
 static bool IsGetStatusGood(KineticStatus status)
 {
-	if (status == KINETIC_STATUS_PENDING || 
-			status == KINETIC_STATUS_SUCCESS ||
+	if ( status == KINETIC_STATUS_SUCCESS ||
 			status == KINETIC_STATUS_BUFFER_OVERRUN)
 		return true;
 	else return false;
@@ -238,7 +246,7 @@ static int kinetic_get(struct kinetic_drive *drv,
 	KineticStatus status = KINETIC_STATUS_SUCCESS;
 	kinetic_req_t *req;
 	kinetic_metadata_t *metadata;
-	KineticCallback callback = fd < 0 ? NULL : req_cmplt_callback;
+	KineticCompletionClosure *callback = fd < 0 ? NULL : &closure;
 	uint32_t i, seg_size, segs = len/KINETIC_OBJECT_LIMIT;
 	if ((len % KINETIC_OBJECT_LIMIT) || (len == 0))  segs++;
 	assert(offset == 0);
@@ -251,13 +259,13 @@ static int kinetic_get(struct kinetic_drive *drv,
 	metadata = (kinetic_metadata_t *)req->metadata;
 	req->seg_posted = segs;
 	for (i = 0; i < segs; i++) {
-		metadata->entry.reference = req;
+		metadata->req = req;
 		oid2object(metadata, oid, i);
 		seg_size =  MIN(len, KINETIC_OBJECT_LIMIT);
 		if (!seg_size) 
 			metadata->entry.metadataOnly = true;
-		make_kinetic_req(req, metadata, seg_size, buf, callback);
-		status = KineticClient_Get(drv->handle, &(metadata->entry));
+		make_kinetic_req(req, metadata, seg_size, buf);
+		status = KineticClient_Get(drv->handle, &(metadata->entry), callback);
 		if ( !IsGetStatusGood(status)) {
 			sd_err("failed to write %d object %"PRIx64, seg_size, oid);
 			break;;                                                                                              
@@ -266,7 +274,7 @@ static int kinetic_get(struct kinetic_drive *drv,
 		buf += seg_size;
 		metadata++;
 	}
-	if (status != KINETIC_STATUS_PENDING) 
+	if (( callback  && (status != KINETIC_STATUS_SUCCESS) ) || (callback == NULL)) 
 			free_req(req);
 	return status;
 }
@@ -280,9 +288,9 @@ static KineticStatus kinetic_delete(struct kinetic_drive *drv, uint64_t oid)
 	if (req == NULL) return KINETIC_STATUS_MEMORY_ERROR;
 	metadata = (kinetic_metadata_t *)req->metadata;
 	oid2object(metadata, oid, 0);
-	make_kinetic_req(req, metadata, 0, NULL, NULL);
+	make_kinetic_req(req, metadata, 0, NULL);
    	metadata->entry.metadataOnly = true;
-	if ((status = KineticClient_Get(drv->handle, &(metadata->entry)))
+	if ((status = KineticClient_Get(drv->handle, &(metadata->entry), NULL))
 			 != KINETIC_STATUS_SUCCESS){
 			sd_err("failed to get metadata for  object %"PRIx64, oid);
 			return status;                                                                                              
@@ -291,8 +299,8 @@ static KineticStatus kinetic_delete(struct kinetic_drive *drv, uint64_t oid)
 	assert(segs);
 	for (i = 0; i < segs; i++) {
 		oid2object(metadata, oid, i);
-		make_kinetic_req(req,   metadata, 0, NULL, NULL);
-		if ((status = KineticClient_Delete(drv->handle, &(metadata->entry)))
+		make_kinetic_req(req,   metadata, 0, NULL);
+		if ((status = KineticClient_Delete(drv->handle, &(metadata->entry), NULL))
 		 	!= KINETIC_STATUS_SUCCESS){
 			sd_err("failed to delete object ignoring error %"PRIx64 "%"PRIx32,
 				 oid, i);
@@ -390,10 +398,10 @@ bool kinetic_exist(uint64_t oid, uint8_t ec_index)
 	assert(req != NULL);
 	metadata = (kinetic_metadata_t *)req->metadata;
 	oid2object(metadata, oid, 0);
-	make_kinetic_req(req, metadata, 0, NULL, NULL);
+	make_kinetic_req(req, metadata, 0, NULL);
 	metadata->entry.force = false;
    	metadata->entry.metadataOnly = true;
-	status = KineticClient_Get(drv->handle, &(metadata->entry));
+	status = KineticClient_Get(drv->handle, &(metadata->entry), NULL);
 	if ( (status == KINETIC_STATUS_SUCCESS) || (status == KINETIC_STATUS_BUFFER_OVERRUN))
 		ret = true;
 	else 
@@ -445,9 +453,8 @@ static uint32_t req2size(kinetic_metadata_t *metadata)
 }
 
 static void make_kinetic_req(kinetic_req_t *req, kinetic_metadata_t *metadata,
-		uint32_t len, uint8_t *buf, KineticCallback callback)
+		uint32_t len, uint8_t *buf)
 {
-	metadata->entry.callback = callback;
    	metadata->entry.algorithm = KINETIC_ALGORITHM_SHA1;
    	metadata->entry.newVersion.array = BYTE_ARRAY_NONE;
    	metadata->entry.dbVersion.array = BYTE_ARRAY_NONE;
@@ -663,9 +670,9 @@ size_t kinetic_get_store_objsize(uint64_t oid)
 	}
 	metadata = (kinetic_metadata_t *)req->metadata;
 	oid2object(metadata, oid, 0);
-	make_kinetic_req(req,  metadata, 0, NULL, NULL);
+	make_kinetic_req(req,  metadata, 0, NULL);
 	metadata->entry.metadataOnly = true;
-	status = KineticClient_Get(drv->handle, &(metadata->entry));
+	status = KineticClient_Get(drv->handle, &(metadata->entry), NULL);
 	if (unlikely(status != KINETIC_STATUS_SUCCESS)) {
 		sd_err("failed to read object %"PRIx64 , oid);
 		return 0;                                                                                              
@@ -742,9 +749,9 @@ int kinetic_link(uint64_t oid, uint32_t tgt_epoch)
 	req->tag.segs = 1;
 	metadata = (kinetic_metadata_t *)req->metadata;
 	stale_oid2object(req, oid, tgt_epoch);
-	make_kinetic_req(req, metadata, 0, NULL, NULL);
+	make_kinetic_req(req, metadata, 0, NULL);
 	metadata->entry.metadataOnly = true;
-	if ((status = KineticClient_Put(drv->handle, &(metadata->entry)))
+	if ((status = KineticClient_Put(drv->handle, &(metadata->entry), NULL))
 		 != KINETIC_STATUS_SUCCESS){
 		sd_err("failed to write object %"PRIx64, oid);
 		ret = SD_RES_NETWORK_ERROR;                                                                                              
@@ -891,14 +898,14 @@ int kinetic_get_hash(uint64_t oid, uint32_t epoch, uint8_t *sha1)
 	bool is_readonly_obj = oid_is_readonly(oid);
 
 	oid2object(metadata, oid, 0);
-	make_kinetic_req(req,  metadata, 0, NULL, NULL);
+	make_kinetic_req(req,  metadata, 0, NULL);
    	metadata->entry.metadataOnly = true;
-	status = KineticClient_Get(drv->handle, &(metadata->entry));
+	status = KineticClient_Get(drv->handle, &(metadata->entry), NULL);
 	if (unlikely(status != KINETIC_STATUS_SUCCESS)) {
 		sd_debug("not found object %"PRIx64 , oid);
 		stale_oid2object(req, oid, epoch);
-		make_kinetic_req(req, metadata,  0, NULL, NULL);
-		status = KineticClient_Get(drv->handle, &(metadata->entry));
+		make_kinetic_req(req, metadata,  0, NULL);
+		status = KineticClient_Get(drv->handle, &(metadata->entry), NULL);
 		if (unlikely(status != KINETIC_STATUS_SUCCESS)) {
 			sd_err("failed to read object %"PRIx64 , oid);
 			free_req(req);
@@ -911,8 +918,8 @@ int kinetic_get_hash(uint64_t oid, uint32_t epoch, uint8_t *sha1)
 		free_req(req);
 		return SD_RES_NO_MEM;
 	}
-	make_kinetic_req(req,  metadata, length, buf, NULL);
-	status = KineticClient_Get(drv->handle, &(metadata->entry));
+	make_kinetic_req(req,  metadata, length, buf);
+	status = KineticClient_Get(drv->handle, &(metadata->entry), NULL);
 	if (unlikely(status != KINETIC_STATUS_SUCCESS)) {
 		sd_err("failed to read object %"PRIx64 , oid);
 		free_req(req);
@@ -1008,8 +1015,8 @@ int kinetic_init_config_file(const char *d, char *argp)
 
 	config2oid(metadata);
 	make_kinetic_req(req, metadata,
-			sizeof(config), (uint8_t *)&config, NULL);
-	status = KineticClient_Get(drv->handle, &(metadata->entry));
+			sizeof(config), (uint8_t *)&config);
+	status = KineticClient_Get(drv->handle, &(metadata->entry), NULL);
 	free_req(req);
 	if (unlikely(status != KINETIC_STATUS_SUCCESS)) {
 		sd_err("failed to read object %s", config_path);
@@ -1047,8 +1054,8 @@ int kinetic_write_config(const char *buf, size_t len, bool force_create)
 	}
 	req->tag.segs = 1;
 	config2oid(metadata);
-	make_kinetic_req(req, metadata, len, (uint8_t *)buf, NULL);
-	status = KineticClient_Put(drv->handle, &(metadata->entry));
+	make_kinetic_req(req, metadata, len, (uint8_t *)buf);
+	status = KineticClient_Put(drv->handle, &(metadata->entry), NULL);
 	if (unlikely(status != KINETIC_STATUS_SUCCESS)) {
 		sd_err("failed to write config");
 		free_req(req);
@@ -1088,8 +1095,8 @@ int kinetic_update_epoch_log(uint32_t epoch, struct sd_node *nodes, size_t nr_no
 	memset(req, 0x00, sizeof(*req));
 	req->tag.segs = 1;
 	epoch2object(metadata, epoch);
-	make_kinetic_req(req,  metadata, len, (uint8_t *)buf, NULL);
-	if ((status = KineticClient_Put(drv->handle, &(metadata->entry)))
+	make_kinetic_req(req,  metadata, len, (uint8_t *)buf);
+	if ((status = KineticClient_Put(drv->handle, &(metadata->entry), NULL))
 		 != KINETIC_STATUS_SUCCESS){
 		sd_err("failed to write epoch  path=%s ", metadata->oid);
 		ret =  SD_RES_NETWORK_ERROR;                                                                                              
@@ -1116,8 +1123,8 @@ int kinetic_do_epoch_log_read(uint32_t epoch, struct sd_node *nodes, int len,
 	}
 	metadata = (kinetic_metadata_t *)req->metadata;
 	epoch2object(metadata, epoch);
-	make_kinetic_req(req,  metadata, len, (uint8_t *)buf, NULL);
-	if ((status = KineticClient_Get(drv->handle, &(metadata->entry)))
+	make_kinetic_req(req,  metadata, len, (uint8_t *)buf);
+	if ((status = KineticClient_Get(drv->handle, &(metadata->entry), NULL))
 		 != KINETIC_STATUS_SUCCESS){
 		sd_err("failed to write epoch  path=%s ", metadata->oid);
 		ret = SD_RES_NO_TAG;
@@ -1146,7 +1153,8 @@ log_read_exit:
 
 uint32_t kinetic_get_latest_epoch(void)
 {
-	KineticRange range;
+	KineticKeyRange range;
+	ByteBufferArray keyArray;
 	ByteBuffer	 key;
 	uint8_t		buf[sizeof(epoch_end)];
 	/* FIXME complete when key rannge API is supported */
@@ -1155,6 +1163,8 @@ uint32_t kinetic_get_latest_epoch(void)
 	memset(&range, 0x00, sizeof(range));
 	key.array.len = sizeof(buf);
  	key.array.data = buf;
+	keyArray.buffers = &key;
+	keyArray.count = 1;
 	range.startKey.array.data = epoch_start;
 	range.startKey.array.len = sizeof(epoch_start);
 	range.endKey.array.data = epoch_end;
@@ -1162,10 +1172,8 @@ uint32_t kinetic_get_latest_epoch(void)
 	range.startKeyInclusive = true;
 	range.endKeyInclusive = true;
 	range.reverse = true;
-	range.maxRequested = 1;
-	range.keys = &key;
-	status = KineticClient_GetRange(drv->handle, &range);
-	if (status == KINETIC_STATUS_SUCCESS && range.returned)
+	status = KineticClient_GetKeyRange(drv->handle, &range, &keyArray, NULL);
+	if (status == KINETIC_STATUS_SUCCESS && range.maxReturned)
 				return object2epoch(buf);
 	return 0;
 
@@ -1191,13 +1199,6 @@ int kinetic_check_path_len(const char *path)
 	return 0;
 }
 
-static const char * HBStatus2Str(DriveStatus status)
-{
-	if (status == DRIVE_ADDED) return "adding";
-	else if (status == DRIVE_REMOVED) return "removing";
-	else return "unknown operation";
-
-}
 static struct kinetic_drive *drv_connect(const char *host, uint16_t port, bool flag)
 {
 	struct kinetic_drive *drv = malloc(sizeof(*drv));
@@ -1257,30 +1258,6 @@ static kinetic_drive_t * kinetic_add_disk(char *path, bool flag)
 }
 
 
-static void * kinetic_hb_callback(Heartbeat *hb)
-{
-	bool found = false;
-	kinetic_drive_t *drv;
-	return NULL;
-	sd_debug("FIXME::ignoring  heartbeat %s from %s:%s...........", 
-	HBStatus2Str(hb->status), hb->addr[0].ipaddr, hb->addr[1].ipaddr); 
-	list_for_each_entry(drv, &drives, list) {
-		if ((!strncmp(drv->conn.host, hb->addr[0].ipaddr, sizeof(drv->conn.host)) && 
-				drv->conn.port == hb->addr[0].port) || 
-			(!strncmp(drv->conn.host, hb->addr[1].ipaddr, sizeof(drv->conn.host)) && 
-				drv->conn.port == hb->addr[1].port) ){
-					found = true;
-					break;
-		}
-	}
-	if (!found) {
-		char path[32];
-		sprintf(path, "%s:%04d", hb->addr[0].ipaddr, hb->addr[0].port);
-		drv = kinetic_add_disk(path, false);
-		kinetic_send_join_request(drv->conn.host, drv->conn.port, drv->capacity, drv->zone);
-	}
-	return NULL;
-}
 static int is_kinetic_meta_store(const char *path)
 {
 	char conf[PATH_MAX];
@@ -1369,8 +1346,8 @@ int kinetic_remove_epoch(uint32_t epoch)
 			return SD_RES_NO_MEM;
 	
 	epoch2object(metadata, epoch);
-	make_kinetic_req(req, metadata, 0, NULL, NULL);
-	if ((status = KineticClient_Delete(drv->handle, &(metadata->entry)))
+	make_kinetic_req(req, metadata, 0, NULL);
+	if ((status = KineticClient_Delete(drv->handle, &(metadata->entry), NULL))
 		 != KINETIC_STATUS_SUCCESS){
 		sd_err("failed to remove epoch %"PRIx32, epoch);
 		ret =  SD_RES_NETWORK_ERROR;                                                                                              
@@ -1385,12 +1362,11 @@ int kinetic_init_global_pathnames(const char *d, char *argp)
 #define KINETIC_LOG_FILE 		"kinetic.log"
 
 	/* initialize kinetic */
-	KineticStatus status = KineticClient_Init(NULL, 0, (KineticHeartbeatCallback)kinetic_hb_callback);
-	if (status != KINETIC_STATUS_SUCCESS)  return -1;
+	KineticClient_Init(NULL, 0);
 	if (argp)
 		if (kinetic_init_obj_path(argp) || kinetic_init_epoch_path(d, argp) ||
 			kinetic_init_config_path(d, argp)) {
-			KineticClient_DeInit();
+			KineticClient_Shutdown();
 			return -1;
 		}
 	return 0;
@@ -1444,7 +1420,7 @@ int kinetic_post_req(const struct node_id *node, struct sd_req *hdr, void *data,
 			default:
 				assert(false);
 	}
-	if (status == KINETIC_STATUS_PENDING || status == KINETIC_STATUS_SUCCESS)
+	if (status == KINETIC_STATUS_SUCCESS)
 			return SD_RES_SUCCESS;
 	return SD_RES_NETWORK_ERROR;
 }
