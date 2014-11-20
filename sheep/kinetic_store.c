@@ -56,7 +56,7 @@ typedef struct kinetic_tag {
 struct kinetic_req;
 typedef struct kinetic_metadata {
 		/* data must be the first element */
-		KineticCompletionData data;
+		KineticCompletionClosure closure;
 		KineticEntry entry;
         uint8_t 	oid[KINETIC_OBJECT_NAME_LENGTH];
 		uint8_t		padding[3];
@@ -122,14 +122,14 @@ int kinetic_write_config(const char *buf, size_t len, bool force_create);
 static 	void free_req(kinetic_req_t *req);
 static KineticCompletionCallback	req_cmplt_callback(KineticCompletionData *data, void *pref);
 
-static KineticCompletionClosure closure = {(KineticCompletionCallback)req_cmplt_callback, NULL}; 
+//static KineticCompletionClosure closure = {(KineticCompletionCallback)req_cmplt_callback, NULL}; 
 
 static KineticCompletionCallback	req_cmplt_callback(KineticCompletionData *data, void *pref)
 {
-	kinetic_metadata_t *metadata = (kinetic_metadata_t *)data;
+	kinetic_metadata_t *metadata = (kinetic_metadata_t *)pref;
 	kinetic_req_t *req = metadata->req;
-	KineticStatus status = metadata->data.status;
-	assert(req && req->fd && req->sign == KINETIC_REQ_SIGN);
+	KineticStatus status = data->status;
+	assert(req->sign == KINETIC_REQ_SIGN);
 	req->seg_cmplted++;
 	if (!req->val)
 		req->val = (status == KINETIC_STATUS_SUCCESS) ?  SD_RES_SUCCESS : SD_RES_NETWORK_ERROR;
@@ -199,7 +199,7 @@ static KineticStatus kinetic_put(struct kinetic_drive *drv,
 	kinetic_req_t *req;
 	kinetic_metadata_t *metadata;
 	uint32_t i, seg_size, segs = len/KINETIC_OBJECT_LIMIT;
-	KineticCompletionClosure *callback = fd < 0 ? NULL : &closure;
+	KineticCompletionClosure *closure = NULL;
 	if (len % KINETIC_OBJECT_LIMIT) segs++;
 
 	req = alloc_req(sizeof(kinetic_metadata_t) * segs);
@@ -215,7 +215,12 @@ static KineticStatus kinetic_put(struct kinetic_drive *drv,
 		oid2object(metadata, oid, i);
 		seg_size =  MIN(len, KINETIC_OBJECT_LIMIT);
 		make_kinetic_req(req, metadata, seg_size, buf);
-		status = KineticClient_Put(drv->handle, &(metadata->entry), callback);
+		if (fd) {
+			closure = &metadata->closure;
+			closure->callback = (KineticCompletionCallback)req_cmplt_callback;
+			closure->clientData = metadata; 
+		}
+		status = KineticClient_Put(drv->handle, &(metadata->entry), closure);
 
 		/* FIXME upon error disconnect to avoid memory corruption */
 		if (status  != KINETIC_STATUS_SUCCESS) {
@@ -226,7 +231,7 @@ static KineticStatus kinetic_put(struct kinetic_drive *drv,
 		buf += seg_size;
 		metadata++;
 	}
-	if (( callback   && (status != KINETIC_STATUS_SUCCESS) ) || (callback == NULL)) 
+	if (( closure   && (status != KINETIC_STATUS_SUCCESS) ) || (closure == NULL)) 
 			free_req(req);
 	return status;
 }
@@ -246,7 +251,7 @@ static int kinetic_get(struct kinetic_drive *drv,
 	KineticStatus status = KINETIC_STATUS_SUCCESS;
 	kinetic_req_t *req;
 	kinetic_metadata_t *metadata;
-	KineticCompletionClosure *callback = fd < 0 ? NULL : &closure;
+	KineticCompletionClosure *closure = NULL;
 	uint32_t i, seg_size, segs = len/KINETIC_OBJECT_LIMIT;
 	if ((len % KINETIC_OBJECT_LIMIT) || (len == 0))  segs++;
 	assert(offset == 0);
@@ -265,7 +270,12 @@ static int kinetic_get(struct kinetic_drive *drv,
 		if (!seg_size) 
 			metadata->entry.metadataOnly = true;
 		make_kinetic_req(req, metadata, seg_size, buf);
-		status = KineticClient_Get(drv->handle, &(metadata->entry), callback);
+		if (fd) {
+			closure = &metadata->closure;
+			closure->callback = (KineticCompletionCallback)req_cmplt_callback;
+			closure->clientData = metadata; 
+		}
+		status = KineticClient_Get(drv->handle, &(metadata->entry), closure);
 		if ( !IsGetStatusGood(status)) {
 			sd_err("failed to write %d object %"PRIx64, seg_size, oid);
 			break;;                                                                                              
@@ -274,7 +284,7 @@ static int kinetic_get(struct kinetic_drive *drv,
 		buf += seg_size;
 		metadata++;
 	}
-	if (( callback  && (status != KINETIC_STATUS_SUCCESS) ) || (callback == NULL)) 
+	if (( closure  && (status != KINETIC_STATUS_SUCCESS) ) || (closure == NULL)) 
 			free_req(req);
 	return status;
 }
@@ -463,8 +473,10 @@ static void make_kinetic_req(kinetic_req_t *req, kinetic_metadata_t *metadata,
    	metadata->entry.metadataOnly = false;
 	metadata->entry.key.array.len = sizeof(metadata->oid);
 	metadata->entry.key.array.data = metadata->oid;
+	metadata->entry.key.bytesUsed = sizeof(metadata->oid);
 	metadata->entry.value.array.data = buf;
 	metadata->entry.value.array.len = len; 
+	metadata->entry.value.bytesUsed = len;
 	metadata->entry.force = true;
 }
 
@@ -1157,21 +1169,25 @@ uint32_t kinetic_get_latest_epoch(void)
 	ByteBufferArray keyArray;
 	ByteBuffer	 key;
 	uint8_t		buf[sizeof(epoch_end)];
-	/* FIXME complete when key rannge API is supported */
 	struct kinetic_drive *drv =  addr2drv(NULL);
 	KineticStatus status;
 	memset(&range, 0x00, sizeof(range));
+	memset(buf, 0x00,sizeof(buf));
 	key.array.len = sizeof(buf);
  	key.array.data = buf;
+	key.bytesUsed = sizeof(buf);
 	keyArray.buffers = &key;
 	keyArray.count = 1;
 	range.startKey.array.data = epoch_start;
 	range.startKey.array.len = sizeof(epoch_start);
+	range.startKey.bytesUsed = sizeof(epoch_start);
 	range.endKey.array.data = epoch_end;
 	range.endKey.array.len = sizeof(epoch_end);
+	range.endKey.bytesUsed = sizeof(epoch_end);
 	range.startKeyInclusive = true;
 	range.endKeyInclusive = true;
 	range.reverse = true;
+	range.maxReturned = 1;
 	status = KineticClient_GetKeyRange(drv->handle, &range, &keyArray, NULL);
 	if (status == KINETIC_STATUS_SUCCESS && range.maxReturned)
 				return object2epoch(buf);
