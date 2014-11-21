@@ -1,13 +1,19 @@
 Building
 The kinetic store introduced into Sheepdog  uses Kinetic C API library which is required to build Kinetic Sheepdog.
-The library build is integrated into the sheepdog build. For building the sheepdog and kinetic-c library executes the
-following sequence:
+The kinetic C library need to be downloaded from https://github.com/Seagate/kinetic-c. Once the librray source is downloaded,
+execute the following commands to build and install the kinetic C library:
+
+cd {Kinetic C Library}
+make 
+sudo make install
+
+Then, execute the following commands:
+
 cd {sheepdog directory}
 ./autogen.sh
 ./configure
 make
 
-Kinetic C API library supporting sheepdog can be found under ./klib directory.
 
 
 Installation
@@ -20,12 +26,10 @@ sheep -d {directory for Unix sockets } -s kinetic {Kinetic Drive IP Address}:{Ki
 [{,}Kinetic Drive IP Address}:{Kinetic Drive IP Port}...]
 
 Cluster can be formatted using the following command:
-dog format cluster -b kinetic -c 1
+dog format cluster -b kinetic -c 2
 Once cluster is formatted use the Sheepdog commands  such as "dog vdi list",
 "dog vdi create {vdi name }" etc
 
 This alpha code is still work in progress and supports only a few basic commands such as "create" "delete", list.
-
-
 
 
