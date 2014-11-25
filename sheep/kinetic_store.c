@@ -13,7 +13,7 @@
 
 #include "sheep_priv.h"
 #include "kinetic_store.h"
-#include <kinetic_client.h>
+#include "../klib/include/kinetic_client.h"
 #include <string.h>
 /* KINETIC KEY STORE Design */
 #define INVALID_OID					0x0000000000000000
@@ -1261,9 +1261,9 @@ static void * kinetic_hb_callback(Heartbeat *hb)
 {
 	bool found = false;
 	kinetic_drive_t *drv;
-	return NULL;
 	sd_debug("FIXME::ignoring  heartbeat %s from %s:%s...........", 
 	HBStatus2Str(hb->status), hb->addr[0].ipaddr, hb->addr[1].ipaddr); 
+	return NULL;
 	list_for_each_entry(drv, &drives, list) {
 		if ((!strncmp(drv->conn.host, hb->addr[0].ipaddr, sizeof(drv->conn.host)) && 
 				drv->conn.port == hb->addr[0].port) || 
