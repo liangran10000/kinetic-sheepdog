@@ -374,6 +374,7 @@ static bool NewKineticDrive(Heartbeat *hb)
 	KineticHeartbeatEntry *ent;
 	kinetic_list_for_each_entry(ent, &HeartbeatList, list) {
 		if (SameHeartbeat(hb, &ent->hb)) {
+				ent->hits++;
 				new = false;
 				break;
 		}
@@ -386,7 +387,6 @@ static bool NewKineticDrive(Heartbeat *hb)
 			ent->hb.status = DRIVE_ADDED;
 			memcpy(&ent->hb, hb, sizeof(*hb));
 			kinetic_list_add(&ent->list, &HeartbeatList);
-			LOGF("Adding Addr1:%s Addr2:%s", hb->addr[0].ipaddr, hb->addr[1].ipaddr);
 		}
 		else {
 				new = false;
@@ -413,6 +413,7 @@ static void * heartbeat_thread(void *arg)
 	KineticHeartbeatCallback callback = arg;
 	Kinetic_MaskSignals();
 	init_kinetic_list_head(&HeartbeatList);
+	printf("\nstubbed starting heart beat thread");
 	if (epollfd <= 0) {
 		LOGF("failed to create epoll for heartbeat socket  %s",  strerror(errno));
 	}
@@ -442,7 +443,7 @@ static void * heartbeat_thread(void *arg)
 		LOGF("failed to obtain ifaddres  %s",  strerror(errno));
 		goto hb_thread_exit;
 	}
-	for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+	for (ifa = ifaddr; (ifa != NULL); ifa = ifa->ifa_next) {
 		if (ifa->ifa_addr == NULL) continue;
 		if (ifa->ifa_addr->sa_family != AF_INET)  {
 			LOGF("skipping %s into group", inet_ntoa(((struct sockaddr_in *)ifa->ifa_addr)->sin_addr));
